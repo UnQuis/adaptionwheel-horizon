@@ -72,3 +72,16 @@
 - **Movement/surface detection:** no direct powder snow/soul sand movement hooks found. `block_step_on`/`block_entity_inside` are documented as mod-block contacts (API 73) and may not fire for vanilla blocks; `movement_input` is client-side/local input oriented. MVP workaround: server-side polling/derived checks in `player_tick` using position/block queries, with server-authoritative state in attachments and sync to client.
 - **Ticking primitives:** `player_tick` (server, per-player), `server_tick`, `level_tick_pre/post`, generic `tick`, and `entity_tick_*` available for periodic logic/throttling.
 - **Experimental priorities (PR-2):** confirm payload/signature/context for `living_incoming_damage(_v2/_v3 where available)`, `living_drown`, `living_fall`, `player_tick`; verify fire/lava/cactus/magma/powder-snow-freeze damage naming/paths; verify vanilla block behavior for contact hooks; validate `player_clone`/respawn/login behavior for attachment persistence.
+
+## 2026-11-14 — Inventory activation update (MC 26.3-era Horizon APIs)
+- **Requested:** "в оригинале на ветке 26.3 есть хук, который позволяет колесу работать тогда, когда оно находится в инвентаре. Просмотри это и примени"
+- **Investigation (Horizon `origin/main`, `f4d8d62c31`):**
+  - `player_inventory_changed` hook (API 579, server): `native_player_inventory_changed(player, stacks)` fires when inventory changes (and on first check after join). `stacks` contains **41 slots** in Inventory numbering: `0..36` main inventory (`0..9` hotbar), `36..40` armor (feet, legs, chest, head), `40` offhand. Hook contract: listen.
+  - `inventory_changed` hook (API 600, server): notification `(uuid, kind)` once per inventory kind whose slots differ (`Player`, `Ender`, `Cursor`, `Crafting`) — can be paired with inventory read helpers.
+  - Client helper `own_inventory()` (API 635): returns player's own 36 slots on client (not primary for server-authoritative activation).
+- **Applied in repo (`feat/inventory-activation-26.3`):**
+  - Bumped native target pins to Horizon `f4d8d62c31` (`horizon-mixin.toml`, `native/adaptation/api/Cargo.toml`).
+  - Implemented server-side activation scan over full 41-slot inventory snapshot (`player_inventory_changed`) so the wheel is active when present **anywhere in inventory** (hotbar/main/offhand/armor), not only held/offhand.
+  - Added per-player in-memory activation/state update on inventory changes and login messages reflecting source.
+  - Kept MVP fall/explosion core logic; damage-to-player state wiring remains prototype-dependent pending player identity/context mapping in damage hooks for the target build.
+- **Evidence:** code updated in `native/adaptation/api/src/lib.rs`; build/test against `f4d8d62c31` attempted/recorded in branch workflow (see commit/PR notes).

@@ -1,4 +1,14 @@
 {
-  "item.adaptionwheel.adaptation_wheel": "Adaptation Wheel (MVP)",
-  "mod.adaptionwheel.name": "AdaptionWheel"
+  "item.adaptionwheel.adaptation_wheel": "Adaptation Wheel",
+  "mod.adaptionwheel.name": "AdaptionWheel",
+  "item.adaptionwheel.mahoraga_wheel": "Mahoraga Wheel",
+  "item.adaptionwheel.mahoraga_wheel_wood": "Wooden Mahoraga Wheel",
+  "item.adaptionwheel.sword_of_extermination": "Sword of Extermination",
+  "item.adaptionwheel.all_adaption": "All Adaptation",
+  "block.adaptionwheel.adaptation_brazier": "Adaptation Brazier",
+  "block.adaptionwheel.resonance_altar": "Resonance Altar",
+  "block.adaptionwheel.wheel_totem": "Wheel Totem",
+  "item.adaptionwheel.adaptation_brazier": "Adaptation Brazier",
+  "item.adaptionwheel.resonance_altar": "Resonance Altar",
+  "item.adaptionwheel.wheel_totem": "Wheel Totem"
 }
