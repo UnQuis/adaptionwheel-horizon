@@ -375,5 +375,6 @@
   "adaptionwheel.msg.trade_no_experience": "Алтарь просит %s уровней. У вас %s.",
   "adaptionwheel.gui.all_learned": "Твоё колесо уже освоило всё, что открывает этот предмет.",
   "container.adaptionwheel.resonance_altar": "Резонансный алтарь",
-  "itemGroup.adaptionwheel.main": "Колесо Адаптации"
+  "itemGroup.adaptionwheel.main": "Колесо Адаптации",
+  "itemGroup.adaptionwheel.adaptionwheel": "Колесо Адаптации"
 }
