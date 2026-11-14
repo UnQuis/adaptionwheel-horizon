@@ -812,6 +812,40 @@ fn handle_adaptionwheel_command(player: &NativeServerPlayer, command: &str) -> (
     }
 }
 
+fn handle_adaptionwheel_console_command(command: &str) -> (bool, String) {
+    let trimmed = command.trim();
+    if !trimmed.eq_ignore_ascii_case("adaptionwheel") && !trimmed.to_ascii_lowercase().starts_with("adaptionwheel ") {
+        return (false, String::new());
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let _ = parts.next();
+    let sub = parts.next().unwrap_or("help");
+
+    match sub.to_ascii_lowercase().as_str() {
+        "help" => (
+            true,
+            format!(
+                "[{MOD_ID}] console: help | status/reset/activate/set/grant require player context (use in-game as player or target-specific command when available)"
+            ),
+        ),
+        "status" | "reset" | "activate" | "set" | "grant" => (
+            true,
+            format!(
+                "[{MOD_ID}] '{}' requires player context and is not available from dedicated console in this build; run it as an in-game player command.",
+                sub.to_ascii_lowercase()
+            ),
+        ),
+        _ => (
+            true,
+            format!(
+                "[{MOD_ID}] unknown subcommand '{}'. Console supports: help",
+                sub
+            ),
+        ),
+    }
+}
+
 fn tell_login_status(host: &mut dyn Host, event: &PlayerLoggedInEvent<'_>, state: &PlayerAdaptationStateV1) {
     host.tell(
         event.player,
@@ -858,29 +892,11 @@ impl Hooks for Mod {
         Flow::Cancel
     }
 
-    fn perform_console_command(
-        &self,
-        host: &mut dyn Host,
-        event: &mut PerformConsoleCommandEvent<'_>,
-    ) -> Flow {
-        let parts: Vec<&str> = event.command.split_whitespace().collect();
-        if parts.is_empty() || !parts[0].eq_ignore_ascii_case("adaptionwheel") {
+    fn perform_console_command(&self, host: &mut dyn Host, event: &mut PerformConsoleCommandEvent<'_>) -> Flow {
+        let (handled, message) = handle_adaptionwheel_console_command(event.command);
+        if !handled {
             return Flow::Continue;
         }
-        let sub = parts.get(1).copied().unwrap_or("help").to_ascii_lowercase();
-        let message = match sub.as_str() {
-            "help" => format!(
-                "[{MOD_ID}] commands: /adaptionwheel status | /adaptionwheel activate | /adaptionwheel set <concept> <level|progress> <value> | /adaptionwheel grant <concept> <level> | /adaptionwheel reset (concepts: env_fall,type_explosion,env_fire,env_lava,type_general,env_drowning,type_contact). Note: player-targeted subcommands require execution as a player in this build."
-            ),
-            "status" | "activate" | "set" | "grant" | "reset" => format!(
-                "[{MOD_ID}] '{}' requires player context (run as player). Console help: /adaptionwheel help",
-                sub
-            ),
-            _ => format!(
-                "[{MOD_ID}] unknown subcommand '{}'. Try: status, activate, set, grant, reset, help",
-                sub
-            ),
-        };
         host.feedback(Text::literal(message));
         Flow::Cancel
     }
