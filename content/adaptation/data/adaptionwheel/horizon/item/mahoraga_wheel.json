@@ -1,4 +1,3 @@
 {
-  "template": "minecraft:iron_nugget",
-  "item": true
+  "template": "minecraft:iron_nugget"
 }
