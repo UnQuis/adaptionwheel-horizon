@@ -1,0 +1,9 @@
+[package]
+name = "adaptionwheel-native"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+# TODO: pin to the Horizon source commit used for native builds.
+# horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "<commit>" }
+horizon-client = { git = "https://github.com/horizon-rust/horizon" }

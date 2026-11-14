@@ -1,0 +1,89 @@
+name: Недостающий Horizon API / hook
+description: Запрос на расширение Horizon mod API/native hooks, необходимое для порта adaptionwheel
+title: "[API] <кратко: какой hook/helper/возможность нужен>"
+labels: ["api-gap", "port:adaptionwheel"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Используйте этот шаблон, когда существующих возможностей Horizon недостаточно для корректного порта механики adaptionwheel.
+        Перед созданием проверьте: native-hooks.json, docs/native-mods.md, docs/mods.md, примеры в horizon-rust/horizon-mods (native/*), и актуальный трек mod API (см. CONTRIBUTING: mod-related работа ведётся в arismoko/horizon).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Краткое описание проблемы
+      description: Чего не хватает и почему это блокирует/ухудшает порт.
+      placeholder: "Нужен hook/helper для ..., без него невозможно ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: adaptionwheel-use-case
+    attributes:
+      label: Use-case из adaptionwheel (оригинал)
+      description: Какая механика/поведение из Java/NeoForge 1.21.1 мода требует API. Укажите классы/файлы/методы/события оригинала и желаемое поведение в порте.
+      placeholder: |
+        - Механика: ...
+        - Оригинал: path/to/Class.java, метод/событие ...
+        - Ожидаемое поведение в Horizon: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: horizon-checked
+    attributes:
+      label: Что проверено в Horizon (существующие возможности)
+      description: Какие hooks/helpers/API/форматы уже рассмотрены и почему их недостаточно. Приведите конкретные имена/версии/ссылки на docs и примеры.
+      placeholder: |
+        - Проверено: native_hook_x / helper_y (hooks: N), docs/native-mods.md §...
+        - Почему не подходит: момент вызова/нет доступа к .../только client|server/нет cancel semantics/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемая точка расширения
+      description: Конкретное предложение API/контракта. По возможности в стиле Horizon (имя, момент вызова, аргументы, возврат, cancel/flow, mutability, сторона выполнения).
+      placeholder: |
+        - Тип: hook / helper / event / data format / build tooling
+        - Имя (предложение): native_...
+        - Когда вызывается: ...
+        - Сигнатура/данные: ...
+        - Семантика: read-only | mutable | cancellable (Flow/Break), порядок, бюджет/частота
+        - Сторона: client / server / both
+        - Совместимость: ожидаемый hooks API bump / hook_version
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы и обходные пути
+      description: Рассматривались ли обходы (контентный мод, другой hook, перенос логики), их стоимость/ограничения.
+      placeholder: "Обход A: ... (минусы). Обход B: ..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии приёмки
+      description: Когда запрос можно считать реализованным и пригодным для порта.
+      placeholder: |
+        - [ ] Доступен hook/helper ... с документированным контрактом
+        - [ ] Мод может реализовать сценарий: ...
+        - [ ] Поведение проверяемо: тест/пример/пруф ...
+        - [ ] Учтены ограничения: dedicated server/LAN/remote client/perf
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Дополнительный контекст
+      description: Ссылки на ветку порта, черновики реализации, логи, диаграммы, связанные запросы.
+      placeholder: "Repo: https://github.com/UnQuis/adaptionwheel-horizon, PR/branch: ..., related: ..."
+    validations:
+      required: false
