@@ -10,5 +10,7 @@
   "block.adaptionwheel.wheel_totem": "Wheel Totem",
   "item.adaptionwheel.adaptation_brazier": "Adaptation Brazier",
   "item.adaptionwheel.resonance_altar": "Resonance Altar",
-  "item.adaptionwheel.wheel_totem": "Wheel Totem"
+  "item.adaptionwheel.wheel_totem": "Wheel Totem",
+  "itemGroup.adaptionwheel": "Adaption Wheel",
+  "itemGroup.adaptionwheel.main": "Adaption Wheel"
 }

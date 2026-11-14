@@ -1,19 +1,18 @@
-//! AdaptionWheel Horizon native mod - inventory activation update (Horizon 26.3-era APIs).
+//! AdaptionWheel Horizon native mod (server-authoritative adaptation core, Horizon 26.3-era APIs).
 //!
-//! Key update: wheel activation works when the wheel item is present anywhere in the player's
-//! inventory (hotbar/main inventory/offhand/armor slots) using server-side inventory hooks,
-//! preferring `player_inventory_changed` (41-slot snapshot: 0..36 main incl. hotbar, 36..40 armor,
-//! 40 offhand) when available on the target Horizon build.
-//!
-//! Server-authoritative MVP logic retained:
-//! - per-player adaptation state (schema v1, in-memory cache; attachment persistence TODO/wiring)
-//! - fall progress/mitigation (`env_fall`)
-//! - explosion damage progress/mitigation (`type_explosion`, classified by damage type)
+//! Features:
+//! - Wheel activation when the wheel item is present anywhere in player inventory (inventory hook scan).
+//! - Per-player adaptation state cache (in-memory; attachment persistence TODO/wiring).
+//! - Adaptation concepts/scenarios with progress and levels:
+//!   - env_fall, type_explosion (existing)
+//!   - env_fire, env_lava, type_general, env_drowning, type_contact (added)
+//! - Hooks integration: inventory activation, player tick mapping, incoming damage (v3), fall, drown.
+//! - Debug commands: /adaptionwheel status|activate|set|grant|reset|help
 
 use horizon_client::mod_api::{
-    Flow, Hooks, Host, LivingFallEvent, LivingIncomingDamageEvent, NativeCommand,
-    NativeServerPlayer, PerformCommandEvent, PlayerCloneEvent, PlayerInventoryChangedEvent,
-    PlayerLoggedInEvent, RegisterCommandsEvent, Text,
+    Flow, Hooks, Host, LivingDrownEvent, LivingFallEvent, LivingIncomingDamageV3Event,
+    NativeCommand, NativeServerPlayer, PerformCommandEvent, PlayerCloneEvent,
+    PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerTickEvent, RegisterCommandsEvent, Text,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -24,10 +23,31 @@ const STATE_SCHEMA_VERSION: u32 = 1;
 
 const CONCEPT_FALL: &str = "env_fall";
 const CONCEPT_EXPLOSION: &str = "type_explosion";
+const CONCEPT_FIRE: &str = "env_fire";
+const CONCEPT_LAVA: &str = "env_lava";
+const CONCEPT_GENERAL: &str = "type_general";
+const CONCEPT_DROWNING: &str = "env_drowning";
+const CONCEPT_CONTACT: &str = "type_contact";
+
+const ALL_CONCEPTS: [&str; 7] = [
+    CONCEPT_FALL,
+    CONCEPT_EXPLOSION,
+    CONCEPT_FIRE,
+    CONCEPT_LAVA,
+    CONCEPT_GENERAL,
+    CONCEPT_DROWNING,
+    CONCEPT_CONTACT,
+];
 
 const FALL_THRESHOLD: f32 = 40.0;
 const FALL_MAX_GAIN_PER_EVENT: f32 = 20.0;
 const EXPLOSION_MAX_LEVEL_MVP: u8 = 3;
+
+const FIRE_MAX_LEVEL: u8 = 3;
+const LAVA_MAX_LEVEL: u8 = 3;
+const GENERAL_MAX_LEVEL: u8 = 3;
+const DROWNING_MAX_LEVEL: u8 = 3;
+const CONTACT_MAX_LEVEL: u8 = 3;
 
 fn wheel_item_ids() -> &'static [&'static str] {
     &[
@@ -75,8 +95,9 @@ struct PlayerAdaptationStateV1 {
 impl Default for PlayerAdaptationStateV1 {
     fn default() -> Self {
         let mut entries = BTreeMap::new();
-        entries.insert(CONCEPT_FALL.to_string(), AdaptationEntry::default());
-        entries.insert(CONCEPT_EXPLOSION.to_string(), AdaptationEntry::default());
+        for c in ALL_CONCEPTS {
+            entries.insert(c.to_string(), AdaptationEntry::default());
+        }
         Self {
             schema_version: STATE_SCHEMA_VERSION,
             wheel_active: false,
@@ -89,25 +110,29 @@ impl Default for PlayerAdaptationStateV1 {
 impl PlayerAdaptationStateV1 {
     fn normalize(&mut self) {
         self.schema_version = STATE_SCHEMA_VERSION;
-        self.entries.entry(CONCEPT_FALL.to_string()).or_default();
-        self.entries
-            .entry(CONCEPT_EXPLOSION.to_string())
-            .or_default();
+        for c in ALL_CONCEPTS {
+            self.entries.entry(c.to_string()).or_default();
+        }
     }
 
     fn entry_mut(&mut self, concept: &str) -> &mut AdaptationEntry {
         self.entries.entry(concept.to_string()).or_default()
     }
 
+    fn concept_level(&self, concept: &str) -> u8 {
+        self.entries.get(concept).map(|e| e.level).unwrap_or(0)
+    }
+
+    #[allow(dead_code)]
+    fn concept_completed(&self, concept: &str) -> bool {
+        self.entries.get(concept).map(|e| e.completed).unwrap_or(false)
+    }
+
     fn summary(&self) -> String {
         let fall = self.entries.get(CONCEPT_FALL).cloned().unwrap_or_default();
-        let expl = self
-            .entries
-            .get(CONCEPT_EXPLOSION)
-            .cloned()
-            .unwrap_or_default();
+        let expl = self.entries.get(CONCEPT_EXPLOSION).cloned().unwrap_or_default();
         format!(
-            "wheel={} ({:?}) | fall lvl={} prog={:.1}/{} done={} | explosion lvl={}/{} prog={:.1} done={}",
+            "wheel={} ({:?}) | fall lvl={} prog={:.1}/{} done={} | explosion lvl={}/{} prog={:.1} done={} | fire lvl={} | lava lvl={} | general lvl={} | drowning lvl={} | contact lvl={}",
             self.wheel_active,
             self.active_source,
             fall.level,
@@ -117,7 +142,12 @@ impl PlayerAdaptationStateV1 {
             expl.level,
             EXPLOSION_MAX_LEVEL_MVP,
             expl.progress,
-            expl.completed
+            expl.completed,
+            self.concept_level(CONCEPT_FIRE),
+            self.concept_level(CONCEPT_LAVA),
+            self.concept_level(CONCEPT_GENERAL),
+            self.concept_level(CONCEPT_DROWNING),
+            self.concept_level(CONCEPT_CONTACT),
         )
     }
 }
@@ -161,7 +191,6 @@ trait HasItemId {
     fn item_id(&self) -> String;
 }
 
-// Horizon ItemStack in mod_api typically exposes `item` (identifier/name) and `count`.
 impl HasItemId for horizon_client::mod_api::ItemStack {
     fn item_id(&self) -> String {
         self.item.to_string()
@@ -194,243 +223,76 @@ fn set_player_activation(player: u128, scan: ActivationScan) -> bool {
     })
 }
 
-fn format_status(state: &PlayerAdaptationStateV1) -> String {
-    let fall = state.entries.get(CONCEPT_FALL).cloned().unwrap_or_default();
-    let expl = state
-        .entries
-        .get(CONCEPT_EXPLOSION)
-        .cloned()
-        .unwrap_or_default();
-    format!(
-        "wheel_active={} source={:?} schema={} | env_fall: level={} progress={:.2}/{} completed={} | type_explosion: level={}/{} progress={:.2} completed={}",
-        state.wheel_active,
-        state.active_source,
-        state.schema_version,
-        fall.level,
-        fall.progress,
-        FALL_THRESHOLD,
-        fall.completed,
-        expl.level,
-        EXPLOSION_MAX_LEVEL_MVP,
-        expl.progress,
-        expl.completed
-    )
+// --- Entity id -> player uuid mapping (for hooks that provide entity id but not uuid/host) ---
+
+fn entity_player_map() -> &'static Mutex<HashMap<u32, u128>> {
+    static MAP: OnceLock<Mutex<HashMap<u32, u128>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn normalize_concept(input: &str) -> Option<&'static str> {
-    match input.to_ascii_lowercase().as_str() {
-        "env_fall" | "fall" => Some(CONCEPT_FALL),
-        "type_explosion" | "explosion" => Some(CONCEPT_EXPLOSION),
-        _ => None,
+fn refresh_entity_player_map_from_host(host: &dyn Host) {
+    let players = host.server_players();
+    let mut map = entity_player_map().lock().unwrap_or_else(|e| e.into_inner());
+    map.clear();
+    for p in players {
+        if p.entity_id > 0 {
+            map.insert(p.entity_id as u32, p.uuid);
+        }
     }
 }
 
-fn clamp_fall_progress(v: f32) -> f32 {
-    v.clamp(0.0, FALL_THRESHOLD)
+fn player_uuid_for_entity(entity: u32) -> Option<u128> {
+    entity_player_map()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&entity)
+        .copied()
 }
 
-fn apply_set_command(
-    state: &mut PlayerAdaptationStateV1,
-    concept: &str,
-    field: &str,
-    value: f32,
-) -> Result<String, String> {
-    let field = field.to_ascii_lowercase();
+// --- Concepts, thresholds, mitigation ---
+
+fn concept_max_level(concept: &str) -> u8 {
     match concept {
-        CONCEPT_FALL => {
-            let e = state.entry_mut(CONCEPT_FALL);
-            match field.as_str() {
-                "level" => {
-                    let lvl = value.max(0.0) as u8;
-                    if lvl >= 1 {
-                        e.level = 1;
-                        e.completed = true;
-                        e.progress = FALL_THRESHOLD;
-                    } else {
-                        e.level = 0;
-                        e.completed = false;
-                        e.progress = e.progress.min(FALL_THRESHOLD - f32::EPSILON.max(0.0));
-                    }
-                    Ok(format!("env_fall level set to {}", e.level))
-                }
-                "progress" => {
-                    e.progress = clamp_fall_progress(value);
-                    e.completed = e.progress >= FALL_THRESHOLD || e.level >= 1;
-                    if e.completed {
-                        e.level = 1;
-                        e.progress = FALL_THRESHOLD;
-                    } else {
-                        e.level = 0;
-                    }
-                    Ok(format!("env_fall progress set to {:.2}", e.progress))
-                }
-                _ => Err("field must be 'level' or 'progress'".to_string()),
-            }
-        }
-        CONCEPT_EXPLOSION => {
-            let e = state.entry_mut(CONCEPT_EXPLOSION);
-            match field.as_str() {
-                "level" => {
-                    let lvl = (value.max(0.0) as u8).min(EXPLOSION_MAX_LEVEL_MVP);
-                    e.level = lvl;
-                    e.completed = lvl >= EXPLOSION_MAX_LEVEL_MVP;
-                    if e.completed {
-                        e.progress = 0.0;
-                    }
-                    Ok(format!("type_explosion level set to {}", e.level))
-                }
-                "progress" => {
-                    if e.level >= EXPLOSION_MAX_LEVEL_MVP {
-                        e.completed = true;
-                        e.progress = 0.0;
-                        Ok("type_explosion already completed (level max)".to_string())
-                    } else {
-                        let threshold = explosion_threshold(e.level);
-                        e.progress = value.clamp(0.0, threshold.max(0.0));
-                        e.completed = false;
-                        Ok(format!("type_explosion progress set to {:.2}", e.progress))
-                    }
-                }
-                _ => Err("field must be 'level' or 'progress'".to_string()),
-            }
-        }
-        _ => Err("unsupported concept (use env_fall or type_explosion)".to_string()),
+        CONCEPT_FALL => 1,
+        CONCEPT_EXPLOSION => EXPLOSION_MAX_LEVEL_MVP,
+        CONCEPT_FIRE => FIRE_MAX_LEVEL,
+        CONCEPT_LAVA => LAVA_MAX_LEVEL,
+        CONCEPT_GENERAL => GENERAL_MAX_LEVEL,
+        CONCEPT_DROWNING => DROWNING_MAX_LEVEL,
+        CONCEPT_CONTACT => CONTACT_MAX_LEVEL,
+        _ => 1,
     }
 }
 
-fn apply_grant_command(
-    state: &mut PlayerAdaptationStateV1,
-    concept: &str,
-    level: u8,
-) -> Result<String, String> {
+fn leveled_threshold(concept: &str, level: u8) -> f32 {
+    let l = level as f32;
     match concept {
-        CONCEPT_FALL => {
-            let e = state.entry_mut(CONCEPT_FALL);
-            if level >= 1 {
-                e.level = 1;
-                e.completed = true;
-                e.progress = FALL_THRESHOLD;
-                Ok("granted env_fall level 1 (completed)".to_string())
-            } else {
-                e.level = 0;
-                e.completed = false;
-                e.progress = 0.0;
-                Ok("set env_fall to level 0".to_string())
-            }
-        }
-        CONCEPT_EXPLOSION => {
-            let lvl = level.min(EXPLOSION_MAX_LEVEL_MVP);
-            let e = state.entry_mut(CONCEPT_EXPLOSION);
-            e.level = lvl;
-            e.completed = lvl >= EXPLOSION_MAX_LEVEL_MVP;
-            e.progress = 0.0;
-            Ok(format!("granted type_explosion level {}", lvl))
-        }
-        _ => Err("unsupported concept (use env_fall or type_explosion)".to_string()),
+        CONCEPT_EXPLOSION => 30.0 + l * 10.0,
+        CONCEPT_FIRE => 20.0 + l * 10.0,
+        CONCEPT_LAVA => 24.0 + l * 12.0,
+        CONCEPT_GENERAL => 30.0 + l * 15.0,
+        CONCEPT_DROWNING => 10.0 + l * 6.0,
+        CONCEPT_CONTACT => 12.0 + l * 6.0,
+        _ => 20.0 + l * 10.0,
     }
 }
 
-fn handle_adaptionwheel_command(player: &NativeServerPlayer, command: &str) -> (bool, String) {
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() || !parts[0].eq_ignore_ascii_case("adaptionwheel") {
-        return (false, String::new());
-    }
-    let sub = parts.get(1).copied().unwrap_or("status").to_ascii_lowercase();
-    match sub.as_str() {
-        "status" => {
-            let state = get_player_state(player.uuid);
-            (true, format!("[{MOD_ID}] status: {}", format_status(&state)))
-        }
-        "activate" => {
-            // Re-evaluation from inventory requires inventory snapshot/API not available in this hook.
-            // Report current cached activation (updated by inventory hooks) and allow manual refresh hint.
-            let state = get_player_state(player.uuid);
-            (
-                true,
-                format!(
-                    "[{MOD_ID}] activate: wheel_active={} source={:?} (cached from inventory hooks; move/change inventory to re-evaluate automatically)",
-                    state.wheel_active, state.active_source
-                ),
-            )
-        }
-        "reset" => {
-            with_player_state(player.uuid, |state| {
-                *state = PlayerAdaptationStateV1::default();
-            });
-            let state = get_player_state(player.uuid);
-            (true, format!("[{MOD_ID}] reset done. {}", format_status(&state)))
-        }
-        "grant" => {
-            let Some(concept_raw) = parts.get(2) else {
-                return (true, format!("[{MOD_ID}] usage: /adaptionwheel grant <env_fall|type_explosion> <level>"));
-            };
-            let Some(concept) = normalize_concept(concept_raw) else {
-                return (true, format!("[{MOD_ID}] unknown concept '{}'. Use env_fall or type_explosion.", concept_raw));
-            };
-            let level = parts.get(3).and_then(|v| v.parse::<u8>().ok()).unwrap_or(1);
-            let msg = with_player_state(player.uuid, |state| apply_grant_command(state, concept, level));
-            match msg {
-                Ok(m) => {
-                    let state = get_player_state(player.uuid);
-                    (true, format!("[{MOD_ID}] {}. {}", m, format_status(&state)))
-                }
-                Err(e) => (true, format!("[{MOD_ID}] {}", e)),
-            }
-        }
-        "set" => {
-            // /adaptionwheel set <concept> <level|progress> <value>
-            let Some(concept_raw) = parts.get(2) else {
-                return (true, format!("[{MOD_ID}] usage: /adaptionwheel set <env_fall|type_explosion> <level|progress> <value>"));
-            };
-            let Some(field) = parts.get(3) else {
-                return (true, format!("[{MOD_ID}] usage: /adaptionwheel set <env_fall|type_explosion> <level|progress> <value>"));
-            };
-            let Some(value_raw) = parts.get(4) else {
-                return (true, format!("[{MOD_ID}] usage: /adaptionwheel set <env_fall|type_explosion> <level|progress> <value>"));
-            };
-            let Some(concept) = normalize_concept(concept_raw) else {
-                return (true, format!("[{MOD_ID}] unknown concept '{}'. Use env_fall or type_explosion.", concept_raw));
-            };
-            let Ok(value) = value_raw.parse::<f32>() else {
-                return (true, format!("[{MOD_ID}] invalid value '{}'", value_raw));
-            };
-            let msg = with_player_state(player.uuid, |state| apply_set_command(state, concept, field, value));
-            match msg {
-                Ok(m) => {
-                    let state = get_player_state(player.uuid);
-                    (true, format!("[{MOD_ID}] {}. {}", m, format_status(&state)))
-                }
-                Err(e) => (true, format!("[{MOD_ID}] {}", e)),
-            }
-        }
-        "help" => (
-            true,
-            format!(
-                "[{MOD_ID}] commands: /adaptionwheel status | /adaptionwheel activate | /adaptionwheel set <env_fall|type_explosion> <level|progress> <value> | /adaptionwheel grant <env_fall|type_explosion> <level> | /adaptionwheel reset"
-            ),
-        ),
-        _ => (
-            true,
-            format!(
-                "[{MOD_ID}] unknown subcommand '{}'. Try: status, activate, set, grant, reset",
-                sub
-            ),
-        ),
+fn leveled_reduction(concept: &str, level: u8) -> f32 {
+    match concept {
+        CONCEPT_EXPLOSION => match level { 0 => 0.0, 1 => 0.10, 2 => 0.20, _ => 0.35 },
+        CONCEPT_FIRE => match level { 0 => 0.0, 1 => 0.15, 2 => 0.30, _ => 0.45 },
+        CONCEPT_LAVA => match level { 0 => 0.0, 1 => 0.20, 2 => 0.35, _ => 0.50 },
+        CONCEPT_GENERAL => match level { 0 => 0.0, 1 => 0.10, 2 => 0.20, _ => 0.30 },
+        CONCEPT_DROWNING => match level { 0 => 0.0, 1 => 0.25, 2 => 0.50, _ => 0.75 },
+        CONCEPT_CONTACT => match level { 0 => 0.0, 1 => 0.20, 2 => 0.35, _ => 0.50 },
+        _ => 0.0,
     }
 }
 
-fn explosion_threshold(level: u8) -> f32 {
-    30.0 + (level as f32) * 10.0
-}
-
-fn explosion_reduction(level: u8) -> f32 {
-    match level {
-        0 => 0.0,
-        1 => 0.10,
-        2 => 0.20,
-        _ => 0.35,
-    }
-}
+#[allow(dead_code)]
+fn explosion_threshold(level: u8) -> f32 { leveled_threshold(CONCEPT_EXPLOSION, level) }
+#[allow(dead_code)]
+fn explosion_reduction(level: u8) -> f32 { leveled_reduction(CONCEPT_EXPLOSION, level) }
 
 fn is_explosion_damage_type(damage_type: &str) -> bool {
     let t = damage_type.to_ascii_lowercase();
@@ -440,6 +302,109 @@ fn is_explosion_damage_type(damage_type: &str) -> bool {
 fn is_fall_damage_type(damage_type: &str) -> bool {
     damage_type.to_ascii_lowercase().contains("fall")
 }
+
+fn is_lava_damage_type(damage_type: &str) -> bool {
+    let t = damage_type.to_ascii_lowercase();
+    t == "lava" || t.ends_with(":lava") || t.contains("lava")
+}
+
+fn is_fire_damage_type(damage_type: &str) -> bool {
+    let t = damage_type.to_ascii_lowercase();
+    // lava treated separately; "hot_floor" (magma) treated as fire-like
+    matches!(t.as_str(), "fire" | "in_fire" | "on_fire" | "hot_floor" | "campfire" | "fireball" | "unattributed_fireball")
+        || t.ends_with(":fire")
+        || t.ends_with(":in_fire")
+        || t.ends_with(":on_fire")
+        || t.ends_with(":hot_floor")
+        || t.ends_with(":campfire")
+        || t.ends_with(":fireball")
+        || t.ends_with(":unattributed_fireball")
+        || (t.contains("fire") && !t.contains("firework"))
+}
+
+fn is_drowning_damage_type(damage_type: &str) -> bool {
+    let t = damage_type.to_ascii_lowercase();
+    t == "drown" || t.ends_with(":drown") || t.contains("drown")
+}
+
+fn is_contact_damage_type(damage_type: &str) -> bool {
+    let t = damage_type.to_ascii_lowercase();
+    matches!(t.as_str(), "cactus" | "sweet_berry_bush" | "stalagmite" | "contact")
+        || t.ends_with(":cactus")
+        || t.ends_with(":sweet_berry_bush")
+        || t.ends_with(":stalagmite")
+        || t.contains("cactus")
+        || t.contains("sweet_berry_bush")
+        || t.contains("stalagmite")
+}
+
+/// Primary concept for a damage event (used for progress/mitigation). Fall is handled by living_fall hook.
+fn classify_damage_concept(damage_type: &str) -> Option<&'static str> {
+    if is_explosion_damage_type(damage_type) {
+        Some(CONCEPT_EXPLOSION)
+    } else if is_fall_damage_type(damage_type) {
+        Some(CONCEPT_FALL) // fallback if delivered via damage hook
+    } else if is_lava_damage_type(damage_type) {
+        Some(CONCEPT_LAVA)
+    } else if is_fire_damage_type(damage_type) {
+        Some(CONCEPT_FIRE)
+    } else if is_drowning_damage_type(damage_type) {
+        Some(CONCEPT_DROWNING)
+    } else if is_contact_damage_type(damage_type) {
+        Some(CONCEPT_CONTACT)
+    } else {
+        Some(CONCEPT_GENERAL)
+    }
+}
+
+fn apply_leveled_progress(
+    state: &mut PlayerAdaptationStateV1,
+    concept: &str,
+    amount: f32,
+    max_level: u8,
+    gain_cap: f32,
+) -> bool {
+    if !state.wheel_active {
+        return false;
+    }
+    let entry = state.entry_mut(concept);
+    if entry.completed || entry.level >= max_level {
+        entry.completed = true;
+        entry.progress = 0.0;
+        return false;
+    }
+    let before = (entry.level, entry.progress, entry.completed);
+    entry.progress += amount.max(0.5).min(gain_cap);
+    let mut threshold = leveled_threshold(concept, entry.level);
+    while entry.progress >= threshold && entry.level < max_level {
+        entry.progress -= threshold;
+        entry.level += 1;
+        if entry.level >= max_level {
+            entry.completed = true;
+            entry.progress = 0.0;
+            break;
+        }
+        threshold = leveled_threshold(concept, entry.level);
+    }
+    if entry.level >= max_level {
+        entry.completed = true;
+        entry.progress = 0.0;
+    }
+    before.0 != entry.level
+        || (before.1 - entry.progress).abs() > f32::EPSILON
+        || before.2 != entry.completed
+}
+
+fn mitigation_factor_for_concept(state: &PlayerAdaptationStateV1, concept: &str) -> f32 {
+    if concept == CONCEPT_FALL {
+        return fall_mitigation_factor(state);
+    }
+    let level = state.concept_level(concept);
+    let reduction = leveled_reduction(concept, level);
+    (1.0 - reduction).clamp(0.0, 1.0)
+}
+
+// --- Existing/compat functions (used by tests and hooks) ---
 
 fn apply_fall_progress(state: &mut PlayerAdaptationStateV1, distance_or_damage: f32) -> bool {
     if !state.wheel_active {
@@ -475,39 +440,278 @@ fn fall_mitigation_factor(state: &PlayerAdaptationStateV1) -> f32 {
 }
 
 fn apply_explosion_progress(state: &mut PlayerAdaptationStateV1, amount: f32) -> bool {
-    if !state.wheel_active {
-        return false;
-    }
-    let entry = state.entry_mut(CONCEPT_EXPLOSION);
-    if entry.completed || entry.level >= EXPLOSION_MAX_LEVEL_MVP {
-        entry.completed = true;
-        entry.progress = 0.0;
-        return false;
-    }
-    let before = (entry.level, entry.progress, entry.completed);
-    entry.progress += amount.max(1.0).min(20.0);
-    let mut threshold = explosion_threshold(entry.level);
-    while entry.progress >= threshold && entry.level < EXPLOSION_MAX_LEVEL_MVP {
-        entry.progress -= threshold;
-        entry.level += 1;
-        if entry.level >= EXPLOSION_MAX_LEVEL_MVP {
-            entry.completed = true;
-            entry.progress = 0.0;
-            break;
+    apply_leveled_progress(state, CONCEPT_EXPLOSION, amount, EXPLOSION_MAX_LEVEL_MVP, 20.0)
+}
+
+fn apply_damage_adaptation_for_player(
+    player_uuid: u128,
+    damage_type: &str,
+    amount: &mut f32,
+) {
+    let Some(concept) = classify_damage_concept(damage_type) else { return; };
+    // Fall is primarily handled by living_fall; if it arrives as damage, still apply fall adaptation.
+    with_player_state(player_uuid, |state| {
+        let factor = mitigation_factor_for_concept(state, concept);
+        if *amount > 0.0 {
+            *amount *= factor;
         }
-        threshold = explosion_threshold(entry.level);
+        match concept {
+            CONCEPT_FALL => {
+                let _ = apply_fall_progress(state, (*amount).max(1.0));
+            }
+            CONCEPT_EXPLOSION => {
+                let _ = apply_explosion_progress(state, *amount);
+            }
+            CONCEPT_FIRE => {
+                let _ = apply_leveled_progress(state, CONCEPT_FIRE, *amount, FIRE_MAX_LEVEL, 12.0);
+            }
+            CONCEPT_LAVA => {
+                let _ = apply_leveled_progress(state, CONCEPT_LAVA, *amount, LAVA_MAX_LEVEL, 12.0);
+            }
+            CONCEPT_DROWNING => {
+                let _ = apply_leveled_progress(state, CONCEPT_DROWNING, *amount, DROWNING_MAX_LEVEL, 8.0);
+            }
+            CONCEPT_CONTACT => {
+                let _ = apply_leveled_progress(state, CONCEPT_CONTACT, *amount, CONTACT_MAX_LEVEL, 10.0);
+            }
+            CONCEPT_GENERAL => {
+                let _ = apply_leveled_progress(state, CONCEPT_GENERAL, *amount, GENERAL_MAX_LEVEL, 15.0);
+            }
+            _ => {}
+        }
+    });
+}
+
+// --- Commands/UI helpers ---
+
+fn format_status(state: &PlayerAdaptationStateV1) -> String {
+    let mut parts = vec![format!(
+        "wheel_active={} source={:?} schema={}",
+        state.wheel_active, state.active_source, state.schema_version
+    )];
+    for c in ALL_CONCEPTS {
+        let e = state.entries.get(c).cloned().unwrap_or_default();
+        let max = concept_max_level(c);
+        let extra = if c == CONCEPT_FALL {
+            format!(" prog={:.2}/{}", e.progress, FALL_THRESHOLD)
+        } else if e.level < max && !e.completed {
+            format!(" prog={:.2}/{:.2}", e.progress, leveled_threshold(c, e.level))
+        } else {
+            String::new()
+        };
+        parts.push(format!(
+            "{}: lvl={}/{}{} done={}",
+            c, e.level, max, extra, e.completed
+        ));
     }
-    if entry.level >= EXPLOSION_MAX_LEVEL_MVP {
-        entry.completed = true;
-        entry.progress = 0.0;
+    parts.join(" | ")
+}
+
+fn normalize_concept(input: &str) -> Option<&'static str> {
+    match input.to_ascii_lowercase().as_str() {
+        "env_fall" | "fall" => Some(CONCEPT_FALL),
+        "type_explosion" | "explosion" => Some(CONCEPT_EXPLOSION),
+        "env_fire" | "fire" => Some(CONCEPT_FIRE),
+        "env_lava" | "lava" => Some(CONCEPT_LAVA),
+        "type_general" | "general" | "generic" | "damage" => Some(CONCEPT_GENERAL),
+        "env_drowning" | "drowning" | "drown" => Some(CONCEPT_DROWNING),
+        "type_contact" | "contact" | "cactus" => Some(CONCEPT_CONTACT),
+        _ => None,
     }
-    before.0 != entry.level
-        || (before.1 - entry.progress).abs() > f32::EPSILON
-        || before.2 != entry.completed
+}
+
+fn clamp_fall_progress(v: f32) -> f32 { v.clamp(0.0, FALL_THRESHOLD) }
+
+fn apply_set_command(
+    state: &mut PlayerAdaptationStateV1,
+    concept: &str,
+    field: &str,
+    value: f32,
+) -> Result<String, String> {
+    let field = field.to_ascii_lowercase();
+    let max_level = concept_max_level(concept);
+    match concept {
+        CONCEPT_FALL => {
+            let e = state.entry_mut(CONCEPT_FALL);
+            match field.as_str() {
+                "level" => {
+                    let lvl = value.max(0.0) as u8;
+                    if lvl >= 1 {
+                        e.level = 1;
+                        e.completed = true;
+                        e.progress = FALL_THRESHOLD;
+                    } else {
+                        e.level = 0;
+                        e.completed = false;
+                        e.progress = e.progress.min(FALL_THRESHOLD - f32::EPSILON.max(0.0));
+                    }
+                    Ok(format!("env_fall level set to {}", e.level))
+                }
+                "progress" => {
+                    e.progress = clamp_fall_progress(value);
+                    e.completed = e.progress >= FALL_THRESHOLD || e.level >= 1;
+                    if e.completed {
+                        e.level = 1;
+                        e.progress = FALL_THRESHOLD;
+                    } else {
+                        e.level = 0;
+                    }
+                    Ok(format!("env_fall progress set to {:.2}", e.progress))
+                }
+                _ => Err("field must be 'level' or 'progress'".to_string()),
+            }
+        }
+        CONCEPT_EXPLOSION | CONCEPT_FIRE | CONCEPT_LAVA | CONCEPT_GENERAL | CONCEPT_DROWNING | CONCEPT_CONTACT => {
+            let e = state.entry_mut(concept);
+            match field.as_str() {
+                "level" => {
+                    let lvl = (value.max(0.0) as u8).min(max_level);
+                    e.level = lvl;
+                    e.completed = lvl >= max_level;
+                    if e.completed {
+                        e.progress = 0.0;
+                    }
+                    Ok(format!("{} level set to {}", concept, e.level))
+                }
+                "progress" => {
+                    if e.level >= max_level {
+                        e.completed = true;
+                        e.progress = 0.0;
+                        Ok(format!("{} already completed (level max)", concept))
+                    } else {
+                        let threshold = leveled_threshold(concept, e.level);
+                        e.progress = value.clamp(0.0, threshold.max(0.0));
+                        e.completed = false;
+                        Ok(format!("{} progress set to {:.2}", concept, e.progress))
+                    }
+                }
+                _ => Err("field must be 'level' or 'progress'".to_string()),
+            }
+        }
+        _ => Err("unsupported concept".to_string()),
+    }
+}
+
+fn apply_grant_command(
+    state: &mut PlayerAdaptationStateV1,
+    concept: &str,
+    level: u8,
+) -> Result<String, String> {
+    let max_level = concept_max_level(concept);
+    match concept {
+        CONCEPT_FALL => {
+            let e = state.entry_mut(CONCEPT_FALL);
+            if level >= 1 {
+                e.level = 1;
+                e.completed = true;
+                e.progress = FALL_THRESHOLD;
+                Ok("granted env_fall level 1 (completed)".to_string())
+            } else {
+                e.level = 0;
+                e.completed = false;
+                e.progress = 0.0;
+                Ok("set env_fall to level 0".to_string())
+            }
+        }
+        CONCEPT_EXPLOSION | CONCEPT_FIRE | CONCEPT_LAVA | CONCEPT_GENERAL | CONCEPT_DROWNING | CONCEPT_CONTACT => {
+            let lvl = level.min(max_level);
+            let e = state.entry_mut(concept);
+            e.level = lvl;
+            e.completed = lvl >= max_level;
+            e.progress = 0.0;
+            Ok(format!("granted {} level {}", concept, lvl))
+        }
+        _ => Err("unsupported concept".to_string()),
+    }
+}
+
+fn handle_adaptionwheel_command(player: &NativeServerPlayer, command: &str) -> (bool, String) {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.is_empty() || !parts[0].eq_ignore_ascii_case("adaptionwheel") {
+        return (false, String::new());
+    }
+    let sub = parts.get(1).copied().unwrap_or("status").to_ascii_lowercase();
+    match sub.as_str() {
+        "status" => {
+            let state = get_player_state(player.uuid);
+            (true, format!("[{MOD_ID}] status: {}", format_status(&state)))
+        }
+        "activate" => {
+            let state = get_player_state(player.uuid);
+            (
+                true,
+                format!(
+                    "[{MOD_ID}] activate: wheel_active={} source={:?} (cached from inventory hooks; move/change inventory to re-evaluate automatically)",
+                    state.wheel_active, state.active_source
+                ),
+            )
+        }
+        "reset" => {
+            with_player_state(player.uuid, |state| {
+                *state = PlayerAdaptationStateV1::default();
+            });
+            let state = get_player_state(player.uuid);
+            (true, format!("[{MOD_ID}] reset done. {}", format_status(&state)))
+        }
+        "grant" => {
+            let Some(concept_raw) = parts.get(2) else {
+                return (true, format!("[{MOD_ID}] usage: /adaptionwheel grant <env_fall|type_explosion|env_fire|env_lava|type_general|env_drowning|type_contact> <level>"));
+            };
+            let Some(concept) = normalize_concept(concept_raw) else {
+                return (true, format!("[{MOD_ID}] unknown concept '{}'. Use env_fall,type_explosion,env_fire,env_lava,type_general,env_drowning,type_contact", concept_raw));
+            };
+            let level = parts.get(3).and_then(|v| v.parse::<u8>().ok()).unwrap_or(1);
+            let msg = with_player_state(player.uuid, |state| apply_grant_command(state, concept, level));
+            match msg {
+                Ok(m) => {
+                    let state = get_player_state(player.uuid);
+                    (true, format!("[{MOD_ID}] {}. {}", m, format_status(&state)))
+                }
+                Err(e) => (true, format!("[{MOD_ID}] {}", e)),
+            }
+        }
+        "set" => {
+            let Some(concept_raw) = parts.get(2) else {
+                return (true, format!("[{MOD_ID}] usage: /adaptionwheel set <concept> <level|progress> <value>"));
+            };
+            let Some(field) = parts.get(3) else {
+                return (true, format!("[{MOD_ID}] usage: /adaptionwheel set <concept> <level|progress> <value>"));
+            };
+            let Some(value_raw) = parts.get(4) else {
+                return (true, format!("[{MOD_ID}] usage: /adaptionwheel set <concept> <level|progress> <value>"));
+            };
+            let Some(concept) = normalize_concept(concept_raw) else {
+                return (true, format!("[{MOD_ID}] unknown concept '{}'. Use env_fall,type_explosion,env_fire,env_lava,type_general,env_drowning,type_contact", concept_raw));
+            };
+            let Ok(value) = value_raw.parse::<f32>() else {
+                return (true, format!("[{MOD_ID}] invalid value '{}'", value_raw));
+            };
+            let msg = with_player_state(player.uuid, |state| apply_set_command(state, concept, field, value));
+            match msg {
+                Ok(m) => {
+                    let state = get_player_state(player.uuid);
+                    (true, format!("[{MOD_ID}] {}. {}", m, format_status(&state)))
+                }
+                Err(e) => (true, format!("[{MOD_ID}] {}", e)),
+            }
+        }
+        "help" => (
+            true,
+            format!(
+                "[{MOD_ID}] commands: /adaptionwheel status | /adaptionwheel activate | /adaptionwheel set <concept> <level|progress> <value> | /adaptionwheel grant <concept> <level> | /adaptionwheel reset (concepts: env_fall,type_explosion,env_fire,env_lava,type_general,env_drowning,type_contact)"
+            ),
+        ),
+        _ => (
+            true,
+            format!(
+                "[{MOD_ID}] unknown subcommand '{}'. Try: status, activate, set, grant, reset",
+                sub
+            ),
+        ),
+    }
 }
 
 fn tell_login_status(host: &mut dyn Host, event: &PlayerLoggedInEvent<'_>, state: &PlayerAdaptationStateV1) {
-    // Try to message the joining player (API details may vary by target build).
     host.tell(
         event.player,
         Text::literal(format!(
@@ -527,7 +731,7 @@ struct Mod;
 
 impl Hooks for Mod {
     fn register_commands(&self, _host: &mut dyn Host, event: &mut RegisterCommandsEvent<'_>) {
-        // Operator/debug commands (level 2). Usage strings follow Horizon NativeCommand argument syntax.
+        // Operator/debug commands (level 2).
         event.commands.push(NativeCommand::op("adaptionwheel status", 2));
         event.commands.push(NativeCommand::op("adaptionwheel activate", 2));
         event.commands.push(NativeCommand::op("adaptionwheel reset", 2));
@@ -552,24 +756,27 @@ impl Hooks for Mod {
     }
 
     fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {
+        refresh_entity_player_map_from_host(host);
         let state = get_player_state(event.player);
         tell_login_status(host, event, &state);
     }
 
     fn player_clone(&self, _host: &mut dyn Host, event: &mut PlayerCloneEvent<'_>) {
-        // Preserve in-memory state across respawn/clone (best-effort). Attachment persistence TODO.
         let mut state = get_player_state(event.player);
         state.normalize();
         with_player_state(event.player, |s| *s = state.clone());
         let _ = event.was_death;
     }
 
-    /// Horizon 26.3-era server hook: fires when a player's inventory changes and provides 41 slots
-    /// (0..36 main incl. hotbar, 36..40 armor feet->head, 40 offhand). This enables wheel activation
-    /// when the wheel item is anywhere in inventory.
+    fn player_tick(&self, host: &mut dyn Host, _event: &mut PlayerTickEvent) {
+        // Keep entity-id -> player-uuid map fresh for hooks that only provide entity ids.
+        refresh_entity_player_map_from_host(host);
+    }
+
+    /// Inventory scan enables wheel activation anywhere in inventory.
     fn player_inventory_changed(&self, host: &mut dyn Host, event: &mut PlayerInventoryChangedEvent<'_>) {
         let scan = activation_from_inventory_stacks(event.stacks);
-        let changed = set_player_activation(event.player, scan.clone());
+        let changed = set_player_activation(event.player, scan);
         if changed {
             let state = get_player_state(event.player);
             host.tell(
@@ -582,19 +789,58 @@ impl Hooks for Mod {
         }
     }
 
-    fn living_incoming_damage(&self, _event: &mut LivingIncomingDamageEvent<'_>) -> Flow {
-        // Server-authoritative mitigation/progress wiring requires mapping damage event entity -> player UUID/state.
-        // With player_inventory_changed-based activation now available, progress/mitigation application can be
-        // connected here once player identity/context helpers are finalized for target Horizon API.
+    /// Primary damage adaptation hook (has victim UUID): fire/lava/explosion/general/drowning/contact fallbacks.
+    fn living_incoming_damage_v3(&self, event: &mut LivingIncomingDamageV3Event<'_>) -> Flow {
+        let Some(player_uuid) = event.victim_uuid else {
+            return Flow::Continue;
+        };
+        if event.amount <= 0.0 {
+            return Flow::Continue;
+        }
+        // Only adapt for players we track (state exists or will be created lazily).
+        // Server-authoritative progress/mitigation.
+        apply_damage_adaptation_for_player(player_uuid, event.damage_type, &mut event.amount);
+        if event.amount <= 0.0 {
+            event.amount = 0.0;
+        }
         Flow::Continue
     }
 
+    /// Fall adaptation/mitigation fallback via fall hook (entity-id based).
     fn living_fall(&self, event: &mut LivingFallEvent<'_>) -> Flow {
-        // Fall mitigation/progress requires player identity mapping; activation state can now come from
-        // anywhere-in-inventory detection via inventory hooks.
-        let _ = event.distance;
-        let _ = event.multiplier;
-        let _ = event.kind;
+        let Some(player_uuid) = player_uuid_for_entity(event.entity) else {
+            return Flow::Continue;
+        };
+        let gain_base = (event.distance as f32).max(event.multiplier * 2.0).max(0.0);
+        with_player_state(player_uuid, |state| {
+            let factor = fall_mitigation_factor(state);
+            if factor < 1.0 {
+                event.multiplier *= factor;
+                event.distance *= factor as f64;
+            }
+            if gain_base > 0.0 {
+                let _ = apply_fall_progress(state, gain_base);
+            }
+        });
+        Flow::Continue
+    }
+
+    /// Drowning adaptation/mitigation fallback via drown hook (entity-id based).
+    fn living_drown(&self, event: &mut LivingDrownEvent<'_>) -> Flow {
+        let Some(player_uuid) = player_uuid_for_entity(event.entity) else {
+            return Flow::Continue;
+        };
+        if !event.is_drowning && event.damage_amount <= 0.0 {
+            return Flow::Continue;
+        }
+        with_player_state(player_uuid, |state| {
+            let factor = mitigation_factor_for_concept(state, CONCEPT_DROWNING);
+            if event.damage_amount > 0.0 {
+                event.damage_amount *= factor;
+            }
+            let gain = if event.damage_amount > 0.0 { event.damage_amount } else { 1.0 };
+            let _ = apply_leveled_progress(state, CONCEPT_DROWNING, gain, DROWNING_MAX_LEVEL, 8.0);
+        });
         Flow::Continue
     }
 }
@@ -618,6 +864,11 @@ mod tests {
         let s = PlayerAdaptationStateV1::default();
         assert!(s.entries.contains_key(CONCEPT_FALL));
         assert!(s.entries.contains_key(CONCEPT_EXPLOSION));
+        assert!(s.entries.contains_key(CONCEPT_FIRE));
+        assert!(s.entries.contains_key(CONCEPT_LAVA));
+        assert!(s.entries.contains_key(CONCEPT_GENERAL));
+        assert!(s.entries.contains_key(CONCEPT_DROWNING));
+        assert!(s.entries.contains_key(CONCEPT_CONTACT));
         assert!(s.summary().contains("wheel=false"));
     }
 
@@ -683,5 +934,64 @@ mod tests {
         assert!(is_explosion_damage_type("minecraft:player_explosion"));
         assert!(!is_explosion_damage_type("minecraft:fall"));
         assert!(is_fall_damage_type("minecraft:fall"));
+    }
+
+    #[test]
+    fn damage_type_classification_for_new_concepts() {
+        assert_eq!(classify_damage_concept("minecraft:in_fire"), Some(CONCEPT_FIRE));
+        assert_eq!(classify_damage_concept("minecraft:lava"), Some(CONCEPT_LAVA));
+        assert_eq!(classify_damage_concept("minecraft:drown"), Some(CONCEPT_DROWNING));
+        assert_eq!(classify_damage_concept("minecraft:cactus"), Some(CONCEPT_CONTACT));
+        assert_eq!(classify_damage_concept("minecraft:mob_attack"), Some(CONCEPT_GENERAL));
+        assert_eq!(classify_damage_concept("minecraft:explosion"), Some(CONCEPT_EXPLOSION));
+    }
+
+    #[test]
+    fn leveled_concepts_progress_with_activation() {
+        let mut s = PlayerAdaptationStateV1::default();
+        s.wheel_active = true;
+        let mut changed = false;
+        for _ in 0..20 {
+            changed |= apply_leveled_progress(&mut s, CONCEPT_FIRE, 10.0, FIRE_MAX_LEVEL, 12.0);
+            changed |= apply_leveled_progress(&mut s, CONCEPT_LAVA, 10.0, LAVA_MAX_LEVEL, 12.0);
+            changed |= apply_leveled_progress(&mut s, CONCEPT_GENERAL, 10.0, GENERAL_MAX_LEVEL, 15.0);
+            changed |= apply_leveled_progress(&mut s, CONCEPT_CONTACT, 8.0, CONTACT_MAX_LEVEL, 10.0);
+            changed |= apply_leveled_progress(&mut s, CONCEPT_DROWNING, 6.0, DROWNING_MAX_LEVEL, 8.0);
+        }
+        assert!(changed);
+        assert!(s.concept_level(CONCEPT_FIRE) >= 1);
+        assert!(s.concept_level(CONCEPT_LAVA) >= 1);
+        assert!(s.concept_level(CONCEPT_GENERAL) >= 1);
+        assert!(s.concept_level(CONCEPT_CONTACT) >= 1);
+        assert!(s.concept_level(CONCEPT_DROWNING) >= 1);
+    }
+
+    #[test]
+    fn commands_set_and_grant_new_concepts() {
+        let mut s = PlayerAdaptationStateV1::default();
+        assert!(apply_set_command(&mut s, CONCEPT_FIRE, "progress", 15.0).is_ok());
+        assert!(s.entries[CONCEPT_FIRE].progress > 0.0);
+        assert!(apply_grant_command(&mut s, CONCEPT_LAVA, 2).is_ok());
+        assert_eq!(s.concept_level(CONCEPT_LAVA), 2);
+        assert!(apply_set_command(&mut s, CONCEPT_CONTACT, "level", 3.0).is_ok());
+        assert!(s.concept_completed(CONCEPT_CONTACT));
+        assert!(normalize_concept("drown").is_some());
+        assert!(normalize_concept("general").is_some());
+    }
+
+    #[test]
+    fn damage_adaptation_applies_mitigation_and_progress() {
+        let player = 42u128;
+        with_player_state(player, |s| {
+            *s = PlayerAdaptationStateV1::default();
+            s.wheel_active = true;
+            let e = s.entry_mut(CONCEPT_FIRE);
+            e.level = 2;
+        });
+        let mut amount = 10.0f32;
+        apply_damage_adaptation_for_player(player, "minecraft:in_fire", &mut amount);
+        assert!(amount < 10.0); // mitigation from level 2
+        let s = get_player_state(player);
+        assert!(s.entries[CONCEPT_FIRE].progress >= 0.0);
     }
 }
