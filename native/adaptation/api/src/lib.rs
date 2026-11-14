@@ -11,7 +11,7 @@
 
 use horizon_client::mod_api::{
     Flow, Hooks, Host, LivingDrownEvent, LivingFallEvent, LivingIncomingDamageV3Event,
-    NativeCommand, NativeServerPlayer, PerformCommandEvent, PlayerCloneEvent,
+    NativeCommand, NativeServerPlayer, PerformCommandEvent, PerformConsoleCommandEvent, PlayerCloneEvent,
     PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerTickEvent, RegisterCommandsEvent, Text,
 };
 use serde::{Deserialize, Serialize};
@@ -711,6 +711,40 @@ fn handle_adaptionwheel_command(player: &NativeServerPlayer, command: &str) -> (
     }
 }
 
+fn handle_adaptionwheel_console_command(command: &str) -> (bool, String) {
+    let trimmed = command.trim();
+    if !trimmed.eq_ignore_ascii_case("adaptionwheel") && !trimmed.to_ascii_lowercase().starts_with("adaptionwheel ") {
+        return (false, String::new());
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let _ = parts.next();
+    let sub = parts.next().unwrap_or("help");
+
+    match sub.to_ascii_lowercase().as_str() {
+        "help" => (
+            true,
+            format!(
+                "[{MOD_ID}] console: help | status/reset/activate/set/grant require player context (use in-game as player or target-specific command when available)"
+            ),
+        ),
+        "status" | "reset" | "activate" | "set" | "grant" => (
+            true,
+            format!(
+                "[{MOD_ID}] '{}' requires player context and is not available from dedicated console in this build; run it as an in-game player command.",
+                sub.to_ascii_lowercase()
+            ),
+        ),
+        _ => (
+            true,
+            format!(
+                "[{MOD_ID}] unknown subcommand '{}'. Console supports: help",
+                sub
+            ),
+        ),
+    }
+}
+
 fn tell_login_status(host: &mut dyn Host, event: &PlayerLoggedInEvent<'_>, state: &PlayerAdaptationStateV1) {
     host.tell(
         event.player,
@@ -748,6 +782,15 @@ impl Hooks for Mod {
 
     fn perform_command(&self, host: &mut dyn Host, event: &mut PerformCommandEvent<'_>) -> Flow {
         let (handled, message) = handle_adaptionwheel_command(event.player, event.command);
+        if !handled {
+            return Flow::Continue;
+        }
+        host.feedback(Text::literal(message));
+        Flow::Cancel
+    }
+
+    fn perform_console_command(&self, host: &mut dyn Host, event: &mut PerformConsoleCommandEvent<'_>) -> Flow {
+        let (handled, message) = handle_adaptionwheel_console_command(event.command);
         if !handled {
             return Flow::Continue;
         }
