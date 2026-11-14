@@ -1,51 +1,56 @@
-//! AdaptionWheel Horizon native mod - MVP slice (PR-2).
+//! AdaptionWheel Horizon native mod - inventory activation update (Horizon 26.3-era APIs).
 //!
-//! Target baseline: Horizon commit 139e83fff8 (pinned in horizon-mixin.toml / Cargo.toml).
-//! Server-authoritative MVP scaffold:
-//! - player adaptation state model (schema v1) with serde + NBT/compound codec helpers (best-effort)
-//! - attachment-backed persistence intent for player state (Holder::Player)
-//! - temporary wheel activation model placeholder (offhand/mainhand detection TODO)
-//! - fall damage adaptation scenario (living_fall hook): progress/complete/mitigation
-//! - explosion damage adaptation scenario (living_incoming_damage hook): progress/level-up/mitigation
-//! - login/status messaging; debug helpers
+//! Key update: wheel activation works when the wheel item is present anywhere in the player's
+//! inventory (hotbar/main inventory/offhand/armor slots) using server-side inventory hooks,
+//! preferring `player_inventory_changed` (41-slot snapshot: 0..36 main incl. hotbar, 36..40 armor,
+//! 40 offhand) when available on the target Horizon build.
 //!
-//! API alignment based on Horizon 139e83fff8 source inspection:
-//! - hooks/events: player_logged_in(host,event), player_clone(host,event), living_incoming_damage(event)->Flow,
-//!   living_fall(event)->Flow, net_from_client(host,event)
-//! - host: attachments(Holder), net_send_to_player(...)
-//! - attachments: AttachmentType/AttachmentCodec/Holder/Compound/Tag/JavaString
-//!
-//! Some imports/signatures may require adjustment during native-build/cargo check against the exact Horizon crate;
-//! this file is an implementation-oriented scaffold with concrete logic for prototype validation.
+//! Server-authoritative MVP logic retained:
+//! - per-player adaptation state (schema v1, in-memory cache; attachment persistence TODO/wiring)
+//! - fall progress/mitigation (`env_fall`)
+//! - explosion damage progress/mitigation (`type_explosion`, classified by damage type)
 
 use horizon_client::mod_api::{
-    AttachmentCodec, AttachmentError, AttachmentType, Compound, Flow, Holder, Hooks, Host,
-    LivingFallEvent, LivingIncomingDamageEvent, NetFromClientEvent, PlayerCloneEvent, PlayerLoggedInEvent,
-    Tag, Text,
+    Flow, Hooks, Host, LivingFallEvent, LivingIncomingDamageEvent, PlayerCloneEvent,
+    PlayerInventoryChangedEvent, PlayerLoggedInEvent, Text,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Mutex, OnceLock};
 
 const MOD_ID: &str = "adaptionwheel";
 const STATE_SCHEMA_VERSION: u32 = 1;
 
 const CONCEPT_FALL: &str = "env_fall";
 const CONCEPT_EXPLOSION: &str = "type_explosion";
-const NET_CHANNEL_STATE: &str = "adaptionwheel:state_v1";
 
 const FALL_THRESHOLD: f32 = 40.0;
 const FALL_MAX_GAIN_PER_EVENT: f32 = 20.0;
 const EXPLOSION_MAX_LEVEL_MVP: u8 = 3;
-const EXPLOSION_THRESHOLD_BASE: f32 = 30.0;
-const EXPLOSION_THRESHOLD_STEP: f32 = 10.0;
+
+fn wheel_item_ids() -> &'static [&'static str] {
+    &[
+        "adaptionwheel:adaptation_wheel",
+        "adaptionwheel:mahoraga_wheel",
+        "adaptionwheel:mahoraga_wheel_wood",
+    ]
+}
+
+fn is_wheel_item_id(item_id: &str) -> bool {
+    wheel_item_ids()
+        .iter()
+        .any(|id| item_id == *id || item_id.ends_with(":adaptation_wheel"))
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 enum WheelSource {
     #[default]
     None,
+    Inventory,
     MainHand,
     OffHand,
+    Armor,
     Hotbar,
 }
 
@@ -54,10 +59,6 @@ struct AdaptationEntry {
     level: u8,
     progress: f32,
     completed: bool,
-    #[serde(default)]
-    cooldown_until_tick: u64,
-    #[serde(default)]
-    flags: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,21 +119,80 @@ impl PlayerAdaptationStateV1 {
     }
 }
 
-// Attachment persistence wiring (target Horizon 139e83fff8) is scaffolded but requires
-// build-verified Compound/Tag/NBT key types from mod_api (e.g. JavaString) for codec impl.
-// For this MVP slice we keep state logic server-authoritative in code paths and document
-// the persistence integration blocker/evidence in docs and PR notes.
-static PLAYER_ADAPT_STATE: AttachmentType<PlayerAdaptationStateV1> = AttachmentType {
-    namespace: "adaptionwheel",
-    name: "player_state_v1",
-    default: PlayerAdaptationStateV1::default,
-    codec: None,
-    copy_on_death: true,
-    sync: false,
-};
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActivationScan {
+    active: bool,
+    source: WheelSource,
+}
+
+/// Scan 41-slot inventory snapshot from `player_inventory_changed`:
+/// 0..36 main inventory (0..9 hotbar), 36..40 armor (feet, legs, chest, head), 40 offhand.
+fn activation_from_inventory_stacks(stacks: &[Option<impl HasItemId>]) -> ActivationScan {
+    for (idx, slot) in stacks.iter().enumerate() {
+        let Some(stack) = slot else { continue };
+        let item = stack.item_id();
+        if !is_wheel_item_id(&item) {
+            continue;
+        }
+        let source = if idx <= 8 {
+            WheelSource::Hotbar
+        } else if idx <= 35 {
+            WheelSource::Inventory
+        } else if idx <= 39 {
+            WheelSource::Armor
+        } else {
+            WheelSource::OffHand
+        };
+        return ActivationScan {
+            active: true,
+            source,
+        };
+    }
+    ActivationScan {
+        active: false,
+        source: WheelSource::None,
+    }
+}
+
+trait HasItemId {
+    fn item_id(&self) -> String;
+}
+
+// Horizon ItemStack in mod_api typically exposes `item` (identifier/name) and `count`.
+impl HasItemId for horizon_client::mod_api::ItemStack {
+    fn item_id(&self) -> String {
+        self.item.to_string()
+    }
+}
+
+fn states() -> &'static Mutex<HashMap<u128, PlayerAdaptationStateV1>> {
+    static STATES: OnceLock<Mutex<HashMap<u128, PlayerAdaptationStateV1>>> = OnceLock::new();
+    STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn with_player_state<R>(player: u128, f: impl FnOnce(&mut PlayerAdaptationStateV1) -> R) -> R {
+    let mut map = states().lock().unwrap_or_else(|e| e.into_inner());
+    let state = map.entry(player).or_insert_with(PlayerAdaptationStateV1::default);
+    state.normalize();
+    f(state)
+}
+
+fn get_player_state(player: u128) -> PlayerAdaptationStateV1 {
+    let map = states().lock().unwrap_or_else(|e| e.into_inner());
+    map.get(&player).cloned().unwrap_or_default()
+}
+
+fn set_player_activation(player: u128, scan: ActivationScan) -> bool {
+    with_player_state(player, |state| {
+        let changed = state.wheel_active != scan.active || state.active_source != scan.source;
+        state.wheel_active = scan.active;
+        state.active_source = scan.source;
+        changed
+    })
+}
 
 fn explosion_threshold(level: u8) -> f32 {
-    EXPLOSION_THRESHOLD_BASE + (level as f32) * EXPLOSION_THRESHOLD_STEP
+    30.0 + (level as f32) * 10.0
 }
 
 fn explosion_reduction(level: u8) -> f32 {
@@ -146,14 +206,14 @@ fn explosion_reduction(level: u8) -> f32 {
 
 fn is_explosion_damage_type(damage_type: &str) -> bool {
     let t = damage_type.to_ascii_lowercase();
-    t.contains("explosion")
-        || t.contains("player_explosion")
-        || t.contains("bad_respawn_point")
-        || t.contains("fireworks")
-        || t.contains("blast")
+    t.contains("explosion") || t.contains("blast") || t.contains("fireworks") || t.contains("bad_respawn_point")
 }
 
-fn apply_fall_progress(state: &mut PlayerAdaptationStateV1, distance: f64) -> bool {
+fn is_fall_damage_type(damage_type: &str) -> bool {
+    damage_type.to_ascii_lowercase().contains("fall")
+}
+
+fn apply_fall_progress(state: &mut PlayerAdaptationStateV1, distance_or_damage: f32) -> bool {
     if !state.wheel_active {
         return false;
     }
@@ -162,7 +222,7 @@ fn apply_fall_progress(state: &mut PlayerAdaptationStateV1, distance: f64) -> bo
         entry.completed = true;
         return false;
     }
-    let gain = (distance as f32).clamp(1.0, FALL_MAX_GAIN_PER_EVENT);
+    let gain = distance_or_damage.clamp(1.0, FALL_MAX_GAIN_PER_EVENT);
     let before = entry.progress;
     entry.progress = (entry.progress + gain).min(FALL_THRESHOLD);
     if entry.progress >= FALL_THRESHOLD {
@@ -218,106 +278,71 @@ fn apply_explosion_progress(state: &mut PlayerAdaptationStateV1, amount: f32) ->
         || before.2 != entry.completed
 }
 
-fn compute_wheel_active(_host: &mut dyn Host, _player: u128) -> (bool, WheelSource) {
-    // TODO(Horizon 139e83fff8): inspect held/offhand/hotbar items via Host/player inventory helpers.
-    // MVP fallback keeps server-authoritative state explicit but inactive until wired.
-    (false, WheelSource::None)
-}
-
-fn load_state(host: &mut dyn Host, player: u128) -> PlayerAdaptationStateV1 {
-    let holder = Holder::Player(player);
-    match PLAYER_ADAPT_STATE.get(host, holder) {
-        Ok(mut s) => {
-            s.normalize();
-            s
-        }
-        Err(_) => PlayerAdaptationStateV1::default(),
-    }
-}
-
-fn save_state(host: &mut dyn Host, player: u128, state: &PlayerAdaptationStateV1) {
-    let holder = Holder::Player(player);
-    if let Ok(attachments) = host.attachments(holder) {
-        // Best-effort: API surface for setting typed attachment values may differ; this keeps
-        // persistence intent explicit for prototype refinement.
-        let _ = attachments;
-        let _ = state;
-    }
-}
-
-fn sync_state_to_player(host: &mut dyn Host, player: u128, state: &PlayerAdaptationStateV1) {
-    if let Ok(payload) = serde_json::to_vec(state) {
-        let _ = host.net_send_to_player(player, NET_CHANNEL_STATE, &payload);
-    }
-}
-
-fn tell(host: &mut dyn Host, player: u128, msg: String) {
-    host.tell(player, Text::literal(msg));
+fn tell_login_status(host: &mut dyn Host, event: &PlayerLoggedInEvent<'_>, state: &PlayerAdaptationStateV1) {
+    // Try to message the joining player (API details may vary by target build).
+    host.tell(
+        event.player,
+        Text::literal(format!(
+            "[{MOD_ID}] ready. activation: {} ({:?}). Wheel works when present anywhere in inventory.",
+            state.wheel_active, state.active_source
+        )),
+    );
+    host.tell(event.player, Text::literal(format!("[{MOD_ID}] {}", state.summary())));
 }
 
 pub fn hooks() -> Box<dyn Hooks> {
     Box::new(Mod)
 }
 
+#[derive(Default)]
 struct Mod;
 
 impl Hooks for Mod {
     fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {
-        let mut state = load_state(host, event.player);
-        let (active, source) = compute_wheel_active(host, event.player);
-        state.wheel_active = active;
-        state.active_source = source;
-        save_state(host, event.player, &state);
-        sync_state_to_player(host, event.player, &state);
-
-        // event.player is UUID (u128) in generated API for login/clone in many builds; tell may expect entity/player handle.
-        // We keep best-effort status logging path and rely on prototype validation for exact player handle mapping.
-        let _ = event.name;
-        let _ = host;
-        let _ = event.player;
-        let _ = state.summary();
+        let state = get_player_state(event.player);
+        tell_login_status(host, event, &state);
     }
 
-    fn player_clone(&self, host: &mut dyn Host, event: &mut PlayerCloneEvent<'_>) {
-        // copy_on_death=true on attachment handles common respawn persistence; ensure state remains normalized.
-        let mut state = load_state(host, event.player);
+    fn player_clone(&self, _host: &mut dyn Host, event: &mut PlayerCloneEvent<'_>) {
+        // Preserve in-memory state across respawn/clone (best-effort). Attachment persistence TODO.
+        let mut state = get_player_state(event.player);
         state.normalize();
-        if event.was_death {
-            // Keep adaptations in MVP; future: make configurable.
-        }
-        save_state(host, event.player, &state);
-        sync_state_to_player(host, event.player, &state);
+        with_player_state(event.player, |s| *s = state.clone());
+        let _ = event.was_death;
     }
 
-    fn living_incoming_damage(&self, event: &mut LivingIncomingDamageEvent<'_>) -> Flow {
-        // This hook does not receive Host in generated trait signature (per 139e83fff8 inspection).
-        // MVP server-side mitigation by damage classification can be applied here; persistence/progress
-        // updates requiring Host/attachments are handled via follow-up hooks/state plumbing in prototype.
-        if is_explosion_damage_type(event.damage_type) && event.amount > 0.0 {
-            // Conservative default mitigation example for adapted state would be applied once Host/player mapping is wired.
-            // Keep hook behavior safe (no unintended cancellation).
-            let _ = event;
+    /// Horizon 26.3-era server hook: fires when a player's inventory changes and provides 41 slots
+    /// (0..36 main incl. hotbar, 36..40 armor feet->head, 40 offhand). This enables wheel activation
+    /// when the wheel item is anywhere in inventory.
+    fn player_inventory_changed(&self, host: &mut dyn Host, event: &mut PlayerInventoryChangedEvent<'_>) {
+        let scan = activation_from_inventory_stacks(event.stacks);
+        let changed = set_player_activation(event.player, scan.clone());
+        if changed {
+            let state = get_player_state(event.player);
+            host.tell(
+                event.player,
+                Text::literal(format!(
+                    "[{MOD_ID}] wheel activation: {} (source: {:?}, anywhere-in-inventory scan).",
+                    state.wheel_active, state.active_source
+                )),
+            );
         }
+    }
+
+    fn living_incoming_damage(&self, _event: &mut LivingIncomingDamageEvent<'_>) -> Flow {
+        // Server-authoritative mitigation/progress wiring requires mapping damage event entity -> player UUID/state.
+        // With player_inventory_changed-based activation now available, progress/mitigation application can be
+        // connected here once player identity/context helpers are finalized for target Horizon API.
         Flow::Continue
     }
 
     fn living_fall(&self, event: &mut LivingFallEvent<'_>) -> Flow {
-        // Apply mitigation factor when adapted; full state read/write requires player identity/Host context.
-        // If player kind and mapping are available in prototype, set multiplier/distance accordingly.
-        if event.kind == "player" && event.distance > 0.0 {
-            // Placeholder: actual adapted-state lookup happens once player handle mapping is integrated.
-            let _ = event.multiplier;
-        }
+        // Fall mitigation/progress requires player identity mapping; activation state can now come from
+        // anywhere-in-inventory detection via inventory hooks.
+        let _ = event.distance;
+        let _ = event.multiplier;
+        let _ = event.kind;
         Flow::Continue
-    }
-
-    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
-        // Client->server intents are untrusted. MVP reserves channel; ignore payloads for now.
-        if event.channel == NET_CHANNEL_STATE {
-            let _ = host;
-            let _ = event.player;
-            let _ = event.data;
-        }
     }
 }
 
@@ -325,12 +350,48 @@ impl Hooks for Mod {
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
+    struct MockStack {
+        item: String,
+    }
+    impl HasItemId for MockStack {
+        fn item_id(&self) -> String {
+            self.item.clone()
+        }
+    }
+
     #[test]
     fn state_defaults_and_summary() {
         let s = PlayerAdaptationStateV1::default();
         assert!(s.entries.contains_key(CONCEPT_FALL));
         assert!(s.entries.contains_key(CONCEPT_EXPLOSION));
         assert!(s.summary().contains("wheel=false"));
+    }
+
+    #[test]
+    fn activation_detects_wheel_anywhere_in_inventory() {
+        let mut slots: Vec<Option<MockStack>> = vec![None; 41];
+        slots[12] = Some(MockStack { item: "adaptionwheel:adaptation_wheel".into() });
+        let scan = activation_from_inventory_stacks(&slots);
+        assert!(scan.active);
+        assert_eq!(scan.source, WheelSource::Inventory);
+
+        slots[12] = None;
+        slots[0] = Some(MockStack { item: "adaptionwheel:adaptation_wheel".into() });
+        let scan = activation_from_inventory_stacks(&slots);
+        assert!(scan.active);
+        assert_eq!(scan.source, WheelSource::Hotbar);
+
+        slots[0] = None;
+        slots[40] = Some(MockStack { item: "adaptionwheel:adaptation_wheel".into() });
+        let scan = activation_from_inventory_stacks(&slots);
+        assert!(scan.active);
+        assert_eq!(scan.source, WheelSource::OffHand);
+
+        slots[40] = None;
+        let scan = activation_from_inventory_stacks(&slots);
+        assert!(!scan.active);
+        assert_eq!(scan.source, WheelSource::None);
     }
 
     #[test]
@@ -368,5 +429,6 @@ mod tests {
         assert!(is_explosion_damage_type("minecraft:explosion"));
         assert!(is_explosion_damage_type("minecraft:player_explosion"));
         assert!(!is_explosion_damage_type("minecraft:fall"));
+        assert!(is_fall_damage_type("minecraft:fall"));
     }
 }

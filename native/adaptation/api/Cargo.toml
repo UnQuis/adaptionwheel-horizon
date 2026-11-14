@@ -1,6 +1,6 @@
 [package]
 name = "adaptionwheel-native"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [lib]
@@ -9,7 +9,7 @@ path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [dependencies]
-# Pinned to Horizon baseline used for PR-1 validation (139e83fff8).
-horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "139e83fff8" }
+# Horizon target with inventory hooks (origin/main, MC 26.3-era APIs).
+horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "f4d8d62c31" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
