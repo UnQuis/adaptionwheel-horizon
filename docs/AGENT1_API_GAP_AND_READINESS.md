@@ -70,8 +70,45 @@ Minimum evidence expected before recommending merge (policy: 100% confidence, re
 - **Horizon API uncertainty:** damage payload/context & player correlation, mod_net/UI feedback contract sufficiency, and persistence ergonomics remain hypothesis/conditional until prototype evidence confirms or rules out blockers (drafts prepared in `docs/issues/*`).
 - **Stack ordering:** intended stack #4 → #5 → #7 requires careful merge/rebase sequencing. PR #7 is now rebased on PR #5 head `70f844d` (head `3f044c5`) with reproduced content build/check evidence; prior drift resolved, but all stack evidence must be revalidated on final merge heads and supplemented with runtime/integration/CI.
 
-## 5) Immediate support priorities for Agent #4 / coordinator
+## 5) Runtime/integration validation checklist (required for 100% merge confidence)
+
+_No reproducible runtime/instance evidence recorded yet for stack #4→#5→#7 (as of last check). Each item must be tied to exact PR heads/SHAs, Horizon target rev/build, commands, environment, and captured artifacts (logs/screenshots/video/save data as applicable)._
+
+### A. Environment & setup (reproducibility)
+- [ ] Horizon build/revision and launcher/client binary used (path/version/commit), OS/Java/toolchain, prepared game resources/instance.
+- [ ] Mod artifacts installed: `adaptionwheel.hmod` (sha256/size/source commit), native mod build/artifacts if applicable, install path/config.
+- [ ] Exact launch commands and clean/used world/profile state.
+
+### B. Content/package loading (PR #7 + stack)
+- [ ] `cargo-horizon-mod build` and `check --json` on final reviewed head(s) (ok, sha256/size) — recorded for PR #7 on `3f044c5`, must remain valid on final merge head.
+- [ ] In-game/runtime: mod/content loads without errors; creative tab(s), items, blocks appear with expected IDs/names/icons/models where supported.
+- [ ] Known unsupported/runtime-unverified assets/formats explicitly checked and documented (no crashes/missing critical content for scoped slice).
+
+### C. Inventory activation & core state (PR #4/#5)
+- [ ] Wheel activation detected when adaptation wheel is in hotbar, main inventory, offhand, and armor slots (as applicable to scoped behavior) using server-authoritative logic (`player_inventory_changed` path).
+- [ ] Activation updates on inventory changes, login, and clone/respawn flows as designed.
+- [ ] Commands `/adaptionwheel status|activate|set|grant|reset|help` behave correctly in runtime context (permissions/output/state effects).
+
+### D. Adaptation scenarios (PR #5 slice, as applicable)
+- [ ] Repro steps and observed outcomes for each implemented scenario/concept (e.g. env_fall, type_explosion, env_fire, env_lava, type_general, env_drowning, type_contact): trigger condition, progress/level changes, mitigation/effects, classification correctness.
+- [ ] Damage/event-to-player correlation correct in runtime (no misattribution/missed events for covered cases).
+- [ ] Edge cases/bounded limitations documented with evidence.
+
+### E. Persistence & session lifecycle (if in scope of tested slice)
+- [ ] State behavior across relog, respawn/clone, dimension change (if relevant), and server/world restart/save-load.
+- [ ] If persistence is in-memory by design for slice, explicitly document limitation and acceptance; if attachment-backed, capture evidence of save/load correctness.
+
+### F. Sync/UI/feedback (if in scope)
+- [ ] Client-visible feedback/state sync (HUD/messages/screens/mod_net) matches server-authoritative state for tested flows.
+- [ ] No desync/regression observed in covered scenarios.
+
+### G. Stack/integration & CI
+- [ ] Evidence collected on actual stack order #4→#5→#7 (or final merged result) with exact SHAs.
+- [ ] No regressions introduced by rebases/stacked fixes; native `cargo test` and content build/check revalidated on final heads as needed.
+- [ ] CI/checks added or, if unavailable, manual evidence is complete and reproducible.
+
+## 6) Immediate support priorities for Agent #4 / coordinator
 - Finalize and maintain this gap/readiness register with evidence from ongoing PR work.
 - Validate/update `docs/issues/*` drafts against confirmed blockers and correct upstream filing target/process.
-- Provide acceptance checklists per PR/scenario (especially PR #4/#5) and call out missing evidence blocking 100% confidence.
+- Provide/maintain acceptance checklists per PR/scenario (especially #4/#5/#7) and call out missing evidence blocking 100% confidence.
 - Support adaptation logic/data/command integration questions with parity/spec references (`FEATURE_PARITY_MATRIX.md`, `MVP_*`, `HORIZON_NOTES.md`).
