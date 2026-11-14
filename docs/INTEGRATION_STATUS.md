@@ -15,7 +15,7 @@ Integration and coherence of `content/` + `native/` in this repo: Horizon conten
 | PR | Branch | Base | State | Checks | Notes |
 |---|---|---|---|---|---|
 | #4 | `feat/inventory-activation-26.3` | `main` | OPEN, MERGEABLE | none | Wheel activation from any inventory slot (player_inventory_changed, 41-slot snapshot), Horizon target pin `f4d8d62c31`, asset/data port + commands in scope per PR. Claimed `cargo test` 6/6 (not separately re-run on PR #4 head in this audit). |
-| #5 | `feat/creative-tab-adaptation-logic` | `feat/inventory-activation-26.3` (stacked) | OPEN, MERGEABLE | none | Adds missing `assets/adaptionwheel/items/*.json` refs, creative tab data/lang, expanded adaptation scenarios/commands/engine logic. Claimed `cargo test` 10/10. Remote head audited earlier: `2887d23`; local includes pushed fix `d7cbf17`. |
+| #5 | `feat/creative-tab-adaptation-logic` | `feat/inventory-activation-26.3` (stacked) | OPEN, MERGEABLE | none | Adds missing `assets/adaptionwheel/items/*.json` refs, creative tab data/lang, expanded adaptation scenarios/commands/engine logic. Claimed `cargo test` 10/10. **Remote head: `d7cbf17`** (dedup fix confirmed pushed). |
 
 **Stack:** PR #5 is stacked on PR #4; merge-readiness must consider base correctness and merge order/composed result.
 
@@ -34,7 +34,7 @@ Environment: Linux, `git 2.56.1`, `cargo 1.99.1 (rustc 1.94.1 host)`, `gh 2.104.
 
 ## Integration findings & fixes
 
-- **Creative tab duplication (fixed, pushed to PR #5 branch):** remote `2887d23` added `data/adaptionwheel/horizon/creative_tab/adaptionwheel.json` while `main.json` also existed, creating duplicate tab definitions with overlapping items. Local fix commit `d7cbf17` (`fix(content): deduplicate creative tab and clean lang keys`) removes `adaptionwheel.json` and unused `itemGroup.adaptionwheel.adaptionwheel` lang keys, keeping a single tab `main.json` (`itemGroup.adaptionwheel.main`) listing all 8 core ported items/blocks. Pushed to `origin/feat/creative-tab-adaptation-logic`.
+- **Creative tab duplication (fixed, on remote PR #5 head):** remote previously had `data/adaptionwheel/horizon/creative_tab/adaptionwheel.json` while `main.json` also existed, creating duplicate tab definitions with overlapping items. Local fix commit `d7cbf17` (`fix(content): deduplicate creative tab and clean lang keys`) removes `adaptionwheel.json` and unused `itemGroup.adaptionwheel.adaptionwheel` lang keys, keeping a single tab `main.json` (`itemGroup.adaptionwheel.main`) listing all 8 core ported items/blocks. Now confirmed on PR #5 head `d7cbf17` (pushed).
 - **Content declarations (current head):** 3 Horizon block declarations + 8 Horizon item declarations under `data/adaptionwheel/horizon/{block,item}`; 8 `assets/adaptionwheel/items/*.json` model refs present; `assets/adaptionwheel` contains 73 files, `content/adaptation/data` contains 13 files (including 1 creative tab). Prior asset-port audit (earlier session) confirmed 64/64 source files from `../adaptionwheel/src/main/resources/assets/adaptionwheel` present in `content/adaptation/assets/adaptionwheel/**` with Horizon-specific additions.
 - **Worktree notes:** unstaged deletions of `content/adaptation/assets/adaptionwheel/models/entity/DharmaChakra.blend` and `DharmaChakraClean.blend` observed (OBJ counterparts remain; `.blend` sources present in `../adaptionwheel` and copied to untracked `docs/reference/models_entity/` locally). Untracked `docs/AGENT1_API_GAP_AND_READINESS.md` present (not authored by this audit). Treat uncommitted/untracked items separately from PR evidence.
 
