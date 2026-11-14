@@ -1,9 +1,15 @@
 [package]
 name = "adaptionwheel-native"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "adaptionwheel_native"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
 [dependencies]
-# TODO: pin to the Horizon source commit used for native builds.
-# horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "<commit>" }
-horizon-client = { git = "https://github.com/horizon-rust/horizon" }
+# Pinned to Horizon baseline used for PR-1 validation (139e83fff8).
+horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "139e83fff8" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,4 +1,4 @@
 {
-  "mod.adaptionwheel.name": "AdaptionWheel",
-  "mod.adaptionwheel.description": "Horizon port scaffold of the AdaptionWheel mod."
+  "item.adaptionwheel.adaptation_wheel": "Adaptation Wheel (MVP)",
+  "mod.adaptionwheel.name": "AdaptionWheel"
 }
