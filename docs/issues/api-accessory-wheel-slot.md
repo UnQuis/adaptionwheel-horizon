@@ -1,8 +1,8 @@
 # [API] Curios-like слот аксессуара / интеграция экипировки колеса (adaptionwheel)
 
 > Статус: **ready to file if blocker confirmed** (probable gap; подавать только после подтверждения блокера прототипом на целевом Horizon).
-> Target Horizon: `139e83fff8` (local baseline PR-1 validation, `docs/HORIZON_NOTES.md`).
-> Трек: mod API / native hooks (см. `CONTRIBUTING.md` horizon-rust/horizon: mod-related API/hooks — в fork `arismoko/horizon`).
+> Target Horizon (baseline notes): `139e83fff8` (`docs/HORIZON_NOTES.md`); актуальные PR порта (#4/#5) таргетируют `f4d8d62c31` — evidence/blocker подтверждать на фактическом target build/commit используемого прототипа.
+> Трек подачи: **требует подтверждения**. Черновик исторически ссылался на `arismoko/horizon` (mod API/hooks), однако текущий `CONTRIBUTING.md` в локальном checkout `horizon-rust/horizon` явного трека не задаёт; перед внешней подачей согласовать корректный репозиторий/процесс с мейнтейнерами Horizon/координатором.
 
 ## Контекст и ссылки
 - Baseline и валидация возможностей Horizon: `docs/HORIZON_NOTES.md` (pinned revision, attachments/mod messages/lifecycle/hooks, known gaps: Curios-equivalent accessory slot).
@@ -58,9 +58,9 @@
 - [ ] Есть документация контракта (момент вызова, сторона, ограничения, совместимость hooks API) и минимальный пример использования.
 
 ## Куда и как подавать
-- **Куда:** mod-related API/hooks запросы подавать в трек mod API Horizon — `arismoko/horizon` (per `horizon-rust/horizon/CONTRIBUTING.md`). Перед подачей согласовать с мейнтейнерами/актуальным каналом проекта, если требуется.
-- **Как:** создать отдельный issue по форме "недостающий Horizon API" (см. `.github/ISSUE_TEMPLATE/missing-horizon-api.yml` в репозитории порта как подготовленный черновик содержания), приложив evidence прототипа и ссылки на `docs/HORIZON_NOTES.md`, PR/ветку прототипа и релевантные участки adaptionwheel.
-- **Когда подавать:** только после выполнения раздела "Критерии подтверждения блокера при прототипе".
+- **Куда (уточнить перед подачей):** канонический трекер — https://github.com/horizon-rust/horizon/issues (по README/CONTRIBUTING Horizon), но для mod API/hooks gaps необходимо сверить актуальный канал/ожидания мейнтейнеров (repo docs/Discord). Историческая ссылка на `arismoko/horizon` может быть устаревшей; не подавать до подтверждения.
+- **Как:** подготовить отдельный issue "недостающий Horizon API" с evidence прототипа, ссылками на `docs/HORIZON_NOTES.md`, PR/ветку, конкретными hooks/helpers, которые пробовались, подтверждённым target/rev Horizon и релевантными участками adaptionwheel.
+- **Когда подавать:** только после выполнения раздела "Критерии подтверждения блокера при прототипе" и подтверждения корректного канала подачи.
 
 ## Источники
 - Horizon: https://github.com/horizon-rust/horizon/blob/main/CONTRIBUTING.md

@@ -1,8 +1,8 @@
 # [API][Conditional] Эргономика персистентности сложного состояния игрока/мода (adaptionwheel)
 
 > Статус: **ready to file if blocker confirmed** (conditional gap — подавать/эскалировать только если прототип покажет, что текущих средств сохранения недостаточно по удобству, надёжности или производительности).
-> Target Horizon: `139e83fff8` (local baseline PR-1 validation, `docs/HORIZON_NOTES.md`).
-> Трек: mod API / native hooks (см. `CONTRIBUTING.md` horizon-rust/horizon: mod-related API/hooks — в fork `arismoko/horizon`).
+> Target Horizon (baseline notes): `139e83fff8` (`docs/HORIZON_NOTES.md`); актуальные PR порта (#4/#5) таргетируют `f4d8d62c31` — evidence/blocker подтверждать на фактическом target build/commit используемого прототипа.
+> Трек подачи: **требует подтверждения**. Черновик исторически ссылался на `arismoko/horizon` (mod API/hooks), однако текущий `CONTRIBUTING.md` в локальном checkout `horizon-rust/horizon` явного трека не задаёт; перед внешней подачей согласовать корректный репозиторий/процесс с мейнтейнерами Horizon/координатором.
 
 ## Контекст и ссылки
 - Baseline и валидация возможностей Horizon: `docs/HORIZON_NOTES.md` (attachments `AttachmentType`/helpers, `player_persistent_data`, config APIs, риски lifecycle/migrations).
@@ -57,9 +57,9 @@
 - [ ] Есть минимальный пример/рекомендованный паттерн для модов.
 
 ## Куда и как подавать
-- **Куда:** mod-related API/hooks/ergonomics запросы подавать в трек mod API Horizon — `arismoko/horizon` (per `horizon-rust/horizon/CONTRIBUTING.md`). Перед подачей согласовать с мейнтейнерами/актуальным каналом проекта, если требуется.
-- **Как:** приложить конкретный прототипный кейс, описание текущего контракта/ограничений, предлагаемое улучшение (helper/event/docs), метрики/логи и ссылки на `docs/HORIZON_NOTES.md`, PR/ветку.
-- **Когда подавать:** только после выполнения раздела "Критерии подтверждения блокера при прототипе".
+- **Куда (уточнить перед подачей):** канонический трекер — https://github.com/horizon-rust/horizon/issues (по README/CONTRIBUTING Horizon), но для mod API/hooks/ergonomics gaps необходимо сверить актуальный канал/ожидания мейнтейнеров (repo docs/Discord). Историческая ссылка на `arismoko/horizon` может быть устаревшей; не подавать до подтверждения.
+- **Как:** приложить конкретный прототипный кейс, описание текущего контракта/ограничений, подтверждённый target/rev Horizon, предлагаемое улучшение (helper/event/docs), метрики/логи и ссылки на `docs/HORIZON_NOTES.md`, PR/ветку.
+- **Когда подавать:** только после выполнения раздела "Критерии подтверждения блокера при прототипе" и подтверждения корректного канала подачи.
 
 ## Источники
 - Horizon native hooks catalog: https://github.com/horizon-rust/horizon/blob/main/native-hooks.json
