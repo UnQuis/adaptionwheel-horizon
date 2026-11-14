@@ -1,7 +1,12 @@
 # [API] Curios-like слот аксессуара / интеграция экипировки колеса (adaptionwheel)
 
-> Статус черновика: **probable gap** (требует подтверждения на целевом Horizon commit/hooks и прототипе PR-1/PR-2).
+> Статус: **ready to file if blocker confirmed** (probable gap; подавать только после подтверждения блокера прототипом на целевом Horizon).
+> Target Horizon: `139e83fff8` (local baseline PR-1 validation, `docs/HORIZON_NOTES.md`).
 > Трек: mod API / native hooks (см. `CONTRIBUTING.md` horizon-rust/horizon: mod-related API/hooks — в fork `arismoko/horizon`).
+
+## Контекст и ссылки
+- Baseline и валидация возможностей Horizon: `docs/HORIZON_NOTES.md` (pinned revision, attachments/mod messages/lifecycle/hooks, known gaps: Curios-equivalent accessory slot).
+- Связанные артефакты порта: `docs/MVP_SCOPE.md`, `docs/MVP_TECH_DESIGN.md`, `docs/FEATURE_PARITY_MATRIX.md`, PR-0 scaffold.
 
 ## Use-case из adaptionwheel
 В оригинальном adaptionwheel (Java/NeoForge 1.21.1) ключевая UX-механика строится вокруг "колеса" адаптаций/способностей игрока. Для порта вероятно потребуется один или несколько из вариантов:
@@ -12,12 +17,12 @@
 Точное соответствие оригинальным классам/событиям Curios/NeoForge должно быть зафиксировано при углублённом анализе исходников adaptionwheel (ссылки на классы/методы добавить в финальную версию issue).
 
 ## Что проверено в Horizon
-По исследованным материалам `horizon-rust/horizon` (README/CONTRIBUTING, `native-hooks.json`, `docs/mods.md`, `docs/native-mods.md`):
+По исследованным материалам `horizon-rust/horizon` (README/CONTRIBUTING, `native-hooks.json`, `docs/mods.md`, `docs/native-mods.md`) и локальному baseline `139e83fff8` (`docs/HORIZON_NOTES.md`):
 - **Контентные данные (.hmod, API 0.2):** декларативные блоки/предметы/табы/эффекты/флюиды/типы сущностей/меню через data/assets и `horizon/*` JSON; нет признаков выделенной декларативной системы "accessory slots/curios".
-- **Native hook points/helpers:** в `native-hooks.json` присутствуют helpers/хуки для работы с инвентарём/экипировкой/предметами и игроком (например, чтение/выдача/обмен предметов, `player_equipment`/`held`/`carried_stack` и связанные server/player helpers в каталоге), меню/контейнеры, `native_on_equip` (смена предмета в слоте экипировки, API 39 по docs/native-mods.md), компоненты предметов, entity/living hooks. Это покрывает многие сценарии с обычной экипировкой и инвентарём.
-- **Named hook points / стабильный API:** `native-hooks.json` каталогизирует контракт (hook/helper/target/версия), `docs/native-mods.md` описывает семантику доступных API (меню, block entities, item behavior, server/player hooks и т.д.).
+- **Native hook points/helpers:** в `native-hooks.json` присутствуют helpers/хуки для работы с инвентарём/экипировкой/предметами и игроком (например, чтение/выдача/обмен предметов, `player_equipment`/`held`/`carried_stack` и связанные server/player helpers), меню/контейнеры, `native_on_equip` (смена предмета в слоте экипировки), компоненты предметов, entity/living hooks. Это покрывает многие сценарии с обычной экипировкой и инвентарём.
+- **Named hook points / стабильный API:** `native-hooks.json` каталогизирует контракт (hook/helper/target/версия), `docs/native-mods.md` описывает семантику доступных API.
 
-(Конкретный список релевантных hooks/helpers для целевого Horizon commit нужно перепроверить на зафиксированном пине перед подачей issue.)
+Перед подачей issue: перепроверить релевантные hooks/helpers и семантику на pinned commit `139e83fff8` (и при необходимости на актуальном nightly/release, выбранном для PR-2 прототипа).
 
 ## Почему существующих возможностей недостаточно (предварительно)
 - Нет явного/стандартного API для регистрации **дополнительных слотов аксессуаров** с сетевой синхронизацией, UI-слотом, правилами размещения, сохранением и поведением при смерти/дропе, аналогичным экосистеме Curios.
@@ -39,12 +44,23 @@
 
 Предпочтителен вариант с наименьшей поверхностью, достаточной для adaptionwheel, и совместимый с существующими menu/container/player-data контрактами.
 
-## Критерии приёмки
+## Критерии подтверждения блокера при прототипе (до подачи issue)
+- [ ] На target Horizon `139e83fff8` реализован/попробован временный обход (held/selected item, inventory rule, custom menu/virtual slot) в рамках PR-2 прототипа.
+- [ ] Зафиксированы конкретные ограничения обхода: UX, синхронизация, persistence, конфликты с ванильными/модовыми потоками, невозможность/высокая стоимость надёжной реализации.
+- [ ] Подтверждено, какие существующие hooks/helpers пробовались (имена, контекст вызова, результат) и почему их недостаточно.
+- [ ] Есть воспроизводимые артефакты: ветка/коммит прототипа, логи/скриншоты/short video или пошаговое описание, ссылка на `docs/HORIZON_NOTES.md` / PR-2 evidence.
+
+## Критерии приёмки (для будущего API)
 - [ ] Нативный мод может надёжно хранить и получать состояние экипированного колеса у игрока (server-side источник истины).
 - [ ] Смена экипировки колеса наблюдаема через hook/event (без polling в каждом тике, где это возможно).
 - [ ] Состояние корректно переживает relog/смену измерения/respawn согласно заданным правилам (keep/drop согласованы с дизайном порта).
 - [ ] Клиент получает достаточные данные для UI/активации колеса (через sync/message/helper) без рассинхронизации.
 - [ ] Есть документация контракта (момент вызова, сторона, ограничения, совместимость hooks API) и минимальный пример использования.
+
+## Куда и как подавать
+- **Куда:** mod-related API/hooks запросы подавать в трек mod API Horizon — `arismoko/horizon` (per `horizon-rust/horizon/CONTRIBUTING.md`). Перед подачей согласовать с мейнтейнерами/актуальным каналом проекта, если требуется.
+- **Как:** создать отдельный issue по форме "недостающий Horizon API" (см. `.github/ISSUE_TEMPLATE/missing-horizon-api.yml` в репозитории порта как подготовленный черновик содержания), приложив evidence прототипа и ссылки на `docs/HORIZON_NOTES.md`, PR/ветку прототипа и релевантные участки adaptionwheel.
+- **Когда подавать:** только после выполнения раздела "Критерии подтверждения блокера при прототипе".
 
 ## Источники
 - Horizon: https://github.com/horizon-rust/horizon/blob/main/CONTRIBUTING.md
@@ -52,3 +68,4 @@
 - Horizon docs (mods/native): https://github.com/horizon-rust/horizon/blob/main/docs/mods.md, https://github.com/horizon-rust/horizon/blob/main/docs/native-mods.md
 - Horizon mod API fork (трек mod-related): https://github.com/arismoko/horizon
 - Портируемый мод: adaptionwheel (Java/NeoForge 1.21.1), `../adaptionwheel` (уточнить конкретные классы/интеграцию Curios при финализации issue)
+- Локальные заметки: `docs/HORIZON_NOTES.md`

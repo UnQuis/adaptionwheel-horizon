@@ -1,7 +1,12 @@
 # [API/UX] Регистрация input/keybind действий для колеса и активных способностей (adaptionwheel)
 
-> Статус черновика: **conditional gap** (зависит от того, хватит ли текущих client hooks/helpers для открытия колеса и активации способностей с приемлемым UX).
+> Статус: **ready to file if blocker confirmed** (conditional gap; подавать только если прототип покажет, что существующих hooks/helpers недостаточно для приемлемого UX).
+> Target Horizon: `139e83fff8` (local baseline PR-1 validation, `docs/HORIZON_NOTES.md`).
 > Трек: mod API / native hooks (см. `CONTRIBUTING.md` horizon-rust/horizon: mod-related API/hooks — в fork `arismoko/horizon`).
+
+## Контекст и ссылки
+- Baseline и валидация возможностей Horizon: `docs/HORIZON_NOTES.md` (UI/input hooks/helpers, `mod_key`/`set_mod_key`, mod screen helpers, MVP feedback path TBD).
+- Связанные артефакты порта: `docs/MVP_SCOPE.md`, `docs/MVP_TECH_DESIGN.md`, PR-0 scaffold.
 
 ## Use-case из adaptionwheel
 Для порта adaptionwheel ожидаются пользовательские действия:
@@ -12,12 +17,12 @@
 Конкретные бинды, состояния ввода и поведение (нажатие/удержание/повтор) нужно подтвердить по исходникам adaptionwheel и зафиксировать в финальном issue.
 
 ## Что проверено в Horizon
-По `native-hooks.json` и `docs/native-mods.md` (horizon-rust/horizon):
+По `native-hooks.json` и `docs/native-mods.md` (horizon-rust/horizon) и `docs/HORIZON_NOTES.md` (baseline `139e83fff8`):
 - В каталоге helpers/hooks присутствуют сущности для модовых клавиш/настроек/экрана: `mod_key`, `set_mod_key`, `setting`/`set_setting`, а также client-side hooks (включая input/render/gui/screen-related точки), что указывает на наличие низкоуровневых возможностей для обработки ввода и хранения настроек.
 - Для модов есть паттерн официальных клиентских модов (Zoom, Minimap и др. в horizon-mods/native) с собственными keybind-настройками и логикой активации, реализованных на hook points.
 - Документация описывает большое число client hooks/helpers; однако удобный высокоуровневый "action registration" API (аналог реестра key mappings/actions с контекстами, категориями, конфликт-резолвом, отображением в стандартном UI биндов) явно не следует из просмотренных материалов.
 
-(Необходимо перепроверить на целевом Horizon commit: есть ли готовый механизм регистрации key actions в меню управления, поддержка категорий/локализации/конфликтов, события press/release/tick-while-held.)
+Перед подачей issue: перепроверить на target `139e83fff8` наличие/отсутствие регистрации actions в меню управления, поддержку категорий/локализации/конфликтов, события press/release/tick-while-held и контекстные ограничения.
 
 ## Почему сырых hooks/helpers может быть недостаточно
 - Низкоуровневый перехват клавиш требует ручной обработки состояний (pressed/released/held), фокуса GUI, чата, экранов, повторов и edge-cases, что повышает риск расхождений с UX Horizon.
@@ -39,12 +44,23 @@
 
 Предпочтение: минимальное расширение поверх существующих механизмов, но с явным контрактом контекста и жизненного цикла ввода.
 
-## Критерии приёмки
+## Критерии подтверждения блокера при прототипе (до подачи issue)
+- [ ] На target Horizon `139e83fff8` реализован прототип wheel activation/input на существующих `mod_key`/input/screen hooks.
+- [ ] Оценены UX и надёжность: обнаружение/настройка бинда, press/hold/release, поведение в GUI/чате, конфликты, подавление ввода, edge-cases.
+- [ ] Зафиксировано, какие именно контракты/события отсутствуют или неудобны (с именами hooks/helpers, примерами кода/логов).
+- [ ] Есть воспроизводимые артефакты прототипа (ветка/коммит, видео/скриншоты/логи, шаги проверки) и ссылка на `docs/HORIZON_NOTES.md` / PR-2 evidence.
+
+## Критерии приёмки (для будущего API)
 - [ ] Мод может зарегистрировать/объявить бинды колеса и активных способностей так, чтобы они были настраиваемы пользователем стандартным способом Horizon.
 - [ ] Доступны надёжные состояния ввода (press/release/hold) в корректных игровых контекстах.
 - [ ] Открытие/использование колеса не ломает ванильный ввод и не конфликтует скрыто с другими модами (есть предсказуемые правила приоритета/consume).
 - [ ] Реализация достаточна для сценариев adaptionwheel (open/select/activate) без постоянного polling-хаков.
 - [ ] Контракт задокументирован (client-only ограничения, порядок хуков, поведение в GUI/чате, совместимость).
+
+## Куда и как подавать
+- **Куда:** mod-related API/hooks запросы подавать в трек mod API Horizon — `arismoko/horizon` (per `horizon-rust/horizon/CONTRIBUTING.md`). Перед подачей согласовать с мейнтейнерами/актуальным каналом проекта, если требуется.
+- **Как:** оформить отдельный issue с конкретным контрактом (имена, сигнатуры, контекст, семантика) и приложить evidence прототипа, ссылки на `docs/HORIZON_NOTES.md`, PR/ветку и примеры из horizon-mods/native.
+- **Когда подавать:** только после выполнения раздела "Критерии подтверждения блокера при прототипе".
 
 ## Источники
 - Horizon native hooks catalog: https://github.com/horizon-rust/horizon/blob/main/native-hooks.json
@@ -52,3 +68,4 @@
 - Официальные native mod примеры (input/key UX паттерны): https://github.com/horizon-rust/horizon-mods/tree/main/native (Zoom, Keystrokes, Minimap, Coords HUD)
 - Horizon mod API fork: https://github.com/arismoko/horizon
 - Портируемый мод: adaptionwheel (Java/NeoForge 1.21.1), `../adaptionwheel` (уточнить бинды/состояния ввода при финализации)
+- Локальные заметки: `docs/HORIZON_NOTES.md`

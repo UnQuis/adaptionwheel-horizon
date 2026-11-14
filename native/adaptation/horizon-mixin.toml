@@ -1,12 +1,11 @@
 # Native mod scaffold for AdaptionWheel (Horizon).
-# Target Horizon commit/hooks level must be pinned before build.
+# PR-2 MVP slice: pinned baseline for validation/implementation attempts.
 [mod]
 id = "adaptionwheel"
-version = "0.0.1"
+version = "0.1.0"
 
 [compatibility]
-# TODO: pin to a specific Horizon commit/nightly revision once target is selected.
-# horizon_revision = "<commit>"
+horizon_revision = "139e83fff8"
 
 [api]
 path = "api"

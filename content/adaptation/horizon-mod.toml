@@ -1,9 +1,8 @@
 id = "adaptionwheel"
 name = "AdaptionWheel"
-version = "0.0.1"
-description = "Horizon port scaffold of the AdaptionWheel mod (work in progress)."
+version = "0.1.0"
+description = "Horizon port of AdaptionWheel (MVP slice in progress): content scaffold and wheel item placeholder."
 authors = ["AlexQuasar"]
-# Content mod scaffold: declarative blocks/items/data/assets (no code). API 0.2.
 api = "0.2"
 side = "both"
 capabilities = ["registries"]
