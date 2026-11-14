@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Horizon mod API tracking (arismoko/horizon)
+    url: https://github.com/arismoko/horizon
+    about: Mod-related API/hooks work is tracked in the Horizon mod API fork (per horizon-rust/horizon CONTRIBUTING).
+  - name: Horizon suggestions / roadmap hub
+    url: https://playhorizon.dev/hub
+    about: General feature ideas and suggestions go to the hub/Discord suggestion queue, not to issues.

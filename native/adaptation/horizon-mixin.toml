@@ -1,0 +1,12 @@
+# Native mod scaffold for AdaptionWheel (Horizon).
+# Target Horizon commit/hooks level must be pinned before build.
+[mod]
+id = "adaptionwheel"
+version = "0.0.1"
+
+[compatibility]
+# TODO: pin to a specific Horizon commit/nightly revision once target is selected.
+# horizon_revision = "<commit>"
+
+[api]
+path = "api"
