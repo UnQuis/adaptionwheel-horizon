@@ -107,3 +107,9 @@
 - Perform runtime verification in target Horizon launcher/instance for tab visibility, item/block rendering, models (including OBJ), sounds, fonts, and shader-related visuals.
 - If OBJ/core shaders/fonts are unsupported in content mods for target Horizon, prepare scoped API/format support requests or porting alternatives (with evidence from runtime tests).
 - Keep scoped PRs for content schema/build fixes separate from unrelated docs/issue edits; include only files required for Horizon content correctness.
+
+### Runtime verification blocker (Agent #2, 2026-11-14, stack PR #4/#5/#7)
+- **Reproducible:** `cargo horizon-mod build` and `cargo horizon-mod check --json` for `content/adaptation` (via `../Horizon` cargo-horizon-mod) pass (`adaptionwheel.hmod`, api 0.2, `ok:true`, sha256 `5c86ca5fe759f4706aacae4a22bab9b2e628e4b492aca84b19cccf8e94a2dc11` for current PR #7 evidence state).
+- **Not reproducible in current environment (blocker):** no configured runnable Horizon launcher+client/game instance and no GUI/runtime environment to load the `.hmod` (with matching native stack) and perform in-game checks.
+- **Missing evidence:** creative tab visibility; item/block rendering and placement/drop behavior; blockstate/model correctness (incl. OBJ entity models `dharma_chakra.obj`, `soe.obj`); sounds playback; TTF font/font-def rendering; core/post shader behavior in content; client item defs (`assets/.../items/*.json`) behavior; runtime behavior of recipes/loot/tags; resource-loading errors in game logs.
+- **Required for gate:** target Horizon launcher/client setup and run instructions, installed stack (content + native bundle), logs/screenshots/video checklist, and explicit confirmation of runtime support/limitations for packaged asset formats.
