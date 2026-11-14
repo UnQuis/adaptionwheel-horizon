@@ -1,0 +1,15 @@
+# Build artifacts
+/target/
+**/target/
+*.hmod
+*.hnmod
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local
+.local/
