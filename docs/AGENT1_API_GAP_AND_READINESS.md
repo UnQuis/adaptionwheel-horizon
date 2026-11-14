@@ -6,9 +6,11 @@ _Last updated: 2026-11-14 (session agent #1, goal `edc26e81-3c9c-48a9-a0ff-922bd
 ## 1) Baseline (repo / PR / agents)
 
 - **Port repo:** https://github.com/UnQuis/adaptionwheel-horizon (`origin` configured locally), current branch during audit: `feat/creative-tab-adaptation-logic`.
-- **Open PRs:**  
+- **Open PRs (stack/evidence snapshot):**  
   - **#4** `feat: wheel activation from any inventory slot (Horizon 26.3 inventory hook)` — pins native target to Horizon `f4d8d62c31`, uses `player_inventory_changed` (API 579, 41-slot snapshot) for server-side wheel activation anywhere in inventory; reports `cargo test` 6 passed.  
-  - **#5** `feat: expand adaptation scenarios, commands, and creative tab data` (builds on #4) — expands native scenarios/commands/state handling and aligns creative tab/content/lang data; reports `cargo test` 10 passed; notes in-memory state and runtime/prototype validation gaps.
+  - **#5** `feat: expand adaptation scenarios, commands, and creative tab data` (builds on #4) — expands native scenarios/commands/state handling and aligns creative tab/content/lang data; reports `cargo test` 10 passed; notes in-memory state and runtime/prototype validation gaps.  
+  - **#7** `fix(content): Horizon schema/build fixes for PR #5 stack` (base `feat/creative-tab-adaptation-logic`, stacked on #5) — scoped content/schema/build fixes; coordinator/Agent #2 reported locally reproduced `cargo-horizon-mod build` + `check --json ok:true` on rebased head (commands/environment details should be captured in PR/evidence trail for merge-readiness).  
+  - **#6** (this docs PR) — coordination/readiness snapshot and Horizon API gap draft updates (docs-only).
 - **Merged PRs:** #1 PR-0 scaffold/parity/planning, #2 PR-1 Horizon validation/MVP design/API gap drafts, #3 PR-2 initial MVP slice.
 - **Key docs/artifacts:** `docs/FEATURE_PARITY_MATRIX.md`, `docs/MVP_SCOPE.md`, `docs/MVP_SCENARIOS.md`, `docs/MVP_TECH_DESIGN.md`, `docs/MVP_IMPL_CHECKLIST.md`, `docs/HORIZON_NOTES.md`, `docs/BUILDING.md`, `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`, `docs/issues/*`.
 - **Coordination:** coordinator `ses_e26d44459ffelqD8Ni1RyYl0qQ` (goal `54d64c97-c12d-4a2f-9802-0caf8c2ec724`), Agent #4 focus/integration-verification goal `10068506-8b9d-4675-89aa-f20777268d90`. Merge policy: several PRs, merge only with 100% confirmed working evidence.
