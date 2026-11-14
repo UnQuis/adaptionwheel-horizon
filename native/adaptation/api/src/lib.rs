@@ -33,6 +33,8 @@ fn wheel_item_ids() -> &'static [&'static str] {
         "adaptionwheel:adaptation_wheel",
         "adaptionwheel:mahoraga_wheel",
         "adaptionwheel:mahoraga_wheel_wood",
+        // Runtime test fallback (vanilla item) when content mod item is unavailable.
+        "minecraft:compass",
     ]
 }
 
