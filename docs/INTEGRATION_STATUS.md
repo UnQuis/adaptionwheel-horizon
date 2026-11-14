@@ -1,63 +1,76 @@
 # Integration & Verification Status (Agent #4)
 
-Last updated: 2026-11-14 (local audit)  
-Branch/worktree: `feat/creative-tab-adaptation-logic` @ `d7cbf17`  
+Last updated: 2026-11-14 (gate aggregation, full stack snapshot)  
+Branch/worktree (main): `feat/creative-tab-adaptation-logic` @ `70f844d` (`origin/feat/creative-tab-adaptation-logic`)  
 Port repo: <https://github.com/UnQuis/adaptionwheel-horizon>  
-Upstream Horizon: <https://github.com/horizon-rust/horizon> (local checkout referenced in prior work: `../Horizon`, baseline notes in docs)  
+Upstream Horizon: <https://github.com/horizon-rust/horizon> (native target pin in repo/PRs: `f4d8d62c31`; local reference checkout noted in docs)  
 Source mod assets/code reference: `../adaptionwheel`
 
 ## Scope (Agent #4)
 
 Integration and coherence of `content/` + `native/` in this repo: Horizon content declarations/assets/data parity where supported, command/hook wiring on available Horizon API, build/test verification where possible, documented limitations/evidence, Horizon API gap tracking/issues with evidence, and merge-readiness gating (merge only with 100% confirmed working evidence for the claimed scope).
 
-## Current PRs (as audited)
+## Current PR stack (open, as audited 2026-11-14)
 
-| PR | Branch | Base | State | Checks | Notes |
+All listed PRs OPEN/MERGEABLE, **no CI/status checks** (gh `statusCheckRollup: []`). Stack/merge order matters.
+
+| PR | Head (SHA) | Base | State | Checks | Scope / notes |
 |---|---|---|---|---|---|
-| #4 | `feat/inventory-activation-26.3` | `main` | OPEN, MERGEABLE | none | Wheel activation from any inventory slot (player_inventory_changed, 41-slot snapshot), Horizon target pin `f4d8d62c31`, asset/data port + commands in scope per PR. Claimed `cargo test` 6/6 (not separately re-run on PR #4 head in this audit). |
-| #5 | `feat/creative-tab-adaptation-logic` | `feat/inventory-activation-26.3` (stacked) | OPEN, MERGEABLE | none | Adds missing `assets/adaptionwheel/items/*.json` refs, creative tab data/lang, expanded adaptation scenarios/commands/engine logic. Claimed `cargo test` 10/10. **Remote head advanced:** now includes dedup fix `d7cbf17`, docs/evidence `219b306`/`10b1852`, vanilla loot tables + 5 recipes `dfd10f9`, mineable/pickaxe tags `934e36c`. |
-| #7 | `fix/content-schema-build-pr5` | `feat/creative-tab-adaptation-logic` (PR #5, stacked) | OPEN (scoped) | none | Horizon schema/build fixes: remove invalid `item` field from data item defs, remove duplicate block-item data entries covered by block defs, remove unsupported `.blend` from packaged assets. Reported evidence: `cargo-horizon-mod build` + `check --json ok:true` (adaptionwheel.hmod, sha256 reported by Agent #2/coordinator in prior context; Agent #4 did not reproduce locally due to missing cargo-horizon-mod). Being rebased/updated onto latest PR #5 head. |
+| #4 | `feat/inventory-activation-26.3` (`cf987c0`) | `main` | OPEN, MERGEABLE | none | Wheel activation from any inventory slot (`player_inventory_changed`, 41-slot snapshot), Horizon target pin `f4d8d62c31`, asset/data port + commands. Claimed `cargo test` 6/6 (not separately re-run by Agent #4). |
+| #5 | `feat/creative-tab-adaptation-logic` (`70f844d`) | `#4` | OPEN, MERGEABLE | none | Items/assets refs + creative tab + expanded adaptation scenarios/commands/engine logic; includes dedup creative tab (`d7cbf17`), docs/evidence, loot tables+5 recipes (`dfd10f9`), mineable/pickaxe tags (`934e36c`), parity/integration docs. |
+| #6 | `docs/agent1-api-gaps-readiness` (`3a715bb`) | `main` | OPEN, MERGEABLE | none | Readiness snapshot + conditional runtime-gap issue drafts (`docs/AGENT1_API_GAP_AND_READINESS.md`, `docs/issues/api-mod-messages-native-sync.md`, `docs/issues/api-persistence-ergonomics-conditional.md`, etc.). Docs/readiness only. |
+| #7 | `fix/content-schema-build-pr5` (`3f044c5`) | `#5` | OPEN, MERGEABLE | none | Horizon schema/build fixes (invalid `item` fields, duplicate block-item data entries, unsupported `.blend` removed). **Reported:** `cargo-horizon-mod build` + `check --json ok:true` (adaptionwheel.hmod, sha256 `5c86ca5fe759f4706aacae4a22bab9b2e628e4b492aca84b19cccf8e94a2dc11`, size 975453, PR #7 comment #6874867629). Not reproduced by Agent #4. |
+| #8 | `feat/native-attachments-persistence` (`4a0d66b`) | `#5` | OPEN, MERGEABLE | none | Attachment-backed player adaptation state persistence fallback (JSON-in-NBT, load/sync/flush with host access; in-memory fallback). **Reported:** `cargo check -q` + `cargo test -q` 10/10 PASS (Agent #3). No runtime integration evidence. |
+| #9 | `docs/content-runtime-blocker` (`9ce3432`) | `#7` | OPEN, MERGEABLE | none | Docs-only: `docs/CONTENT_RUNTIME_BLOCKER.md` (runtime/launcher/instance verification blocker, required env/commands/evidence, current build-level evidence). No runtime artifacts. |
+| #11 | `feat/native-console-command-api99` (`cac5cf8`) | `#5` | OPEN, MERGEABLE | none | `perform_console_command` (API 99): console help + rejection/guidance for player-context commands. **Evidence (Agent #4):** `cd native/adaptation/api && cargo test` **10/10 PASS** (clean worktree, Linux, cargo 1.99.1/rustc 1.94.1). Runtime console not verified. |
 
-**Stack:** PR #5 is stacked on PR #4; merge-readiness must consider base correctness and merge order/composed result.
+**Notes:** PR #8 and #11 are parallel native follow-ups on `#5` (both modify `native/adaptation/api/src/lib.rs`) — composition/merge requires conflict review and combined evidence. PR #7/#9 extend content+docs over `#5`. PR #6 is docs/readiness on `main`.
 
-## Reproduced verification (this audit)
+## Reproduced / reported verification
 
-Environment: Linux, `git 2.56.1`, `cargo 1.99.1 (rustc 1.94.1 host)`, `gh 2.104.0`. `cargo-horizon-mod` **not installed**. No Horizon launcher/instance available for native-build or runtime.
+Environment (Agent #4 local): Linux, `git 2.56.1`, `cargo 1.99.1` (rustc 1.94.1), `gh 2.104.0`. `cargo-horizon-mod` not installed; no Horizon launcher/instance/runtime; `/tmp` was full during this session (now noted as env issue), `/home` available.
 
-| Check | Command / context | Result | Evidence |
+| Check | Command / scope | Result | Evidence / notes |
 |---|---|---|---|
-| Native unit tests (stack head / PR #5 scope) | `cd native/adaptation/api && cargo test` | **PASS** (10/10) | `activation_detects_wheel_anywhere_in_inventory`, `commands_set_and_grant_new_concepts`, `explosion_damage_classifier`, `damage_type_classification_for_new_concepts`, `damage_adaptation_applies_mitigation_and_progress`, `fall_progress_and_mitigation`, `explosion_progress_levels_up`, `fall_requires_activation`, `state_defaults_and_summary`, `leveled_concepts_progress_with_activation`; doc-tests 0. Warnings: dead_code (unused helpers/consts). |
-| Native unit tests on PR #4 head only | not run separately in this audit | **not reproduced** | PR #4 claimed 6/6; current stack (includes PR #4 changes) is green on 10 tests. |
-| Content build (`.hmod`) | `cargo horizon-mod build` (content/adaptation) | **reported PASS** (not reproduced by Agent #4) | Coordinator/Agent #2 reported successful build and `check --json ok:true` (adaptionwheel.hmod, sha256 `8834edd04911b99d0f3ecd0becc1f16c1531efd91c53ead37e34e1644681da59`) with local schema fixes / PR #7 scope using Horizon cargo-horizon-mod tooling; Agent #4 environment lacks `cargo-horizon-mod`. |
-| Native build / dry-run | `horizon-launcher native-build ...` or equivalent | **not run** | launcher/instance/tooling unavailable. |
-| Runtime / in-game behavior | Horizon client/instance | **not run** | no target runtime environment. |
-| CI status checks | GitHub PR checks | **none** | PR #4/#5 report no status check rollup. |
+| Native unit tests (PR #5 core scope) | `cd native/adaptation/api && cargo test` | **PASS (10/10)** | Reproduced by Agent #4 on clean HEAD state. |
+| Native unit tests (PR #4 head) | as claimed | **reported PASS (6/6)** | Not separately re-run by Agent #4. |
+| Native unit tests (PR #8 scope) | `cargo check -q && cargo test -q` | **reported PASS (10/10)** | Agent #3 (scoped). No runtime evidence. |
+| Native unit tests (PR #11 scope) | `cargo test` in clean worktree | **PASS (10/10)** | Agent #4 (commit `cac5cf8`). |
+| Content build/check | `cargo-horizon-mod build` + `check --json` | **reported PASS** | PR #7: ok:true, sha256 `5c86ca5fe759f4706aacae4a22bab9b2e628e4b492aca84b19cccf8e94a2dc11`, size 975453 (PR #7 comment #6874867629). Not reproduced by Agent #4. |
+| Native build/dry-run | horizon-launcher/native-build | **not run** | tooling/instance unavailable. |
+| Runtime / in-game | Horizon launcher/instance | **not run** | no runtime env; no launcher/instance/CI artifacts. |
+| CI checks | GitHub Actions | **none** | no workflows/status checks on PRs. |
 
-## Integration findings & fixes
+## Integration findings (current)
 
-- **Creative tab duplication (fixed, on remote PR #5 head):** remote previously had `data/adaptionwheel/horizon/creative_tab/adaptionwheel.json` while `main.json` also existed, creating duplicate tab definitions with overlapping items. Local fix commit `d7cbf17` (`fix(content): deduplicate creative tab and clean lang keys`) removes `adaptionwheel.json` and unused `itemGroup.adaptionwheel.adaptionwheel` lang keys, keeping a single tab `main.json` (`itemGroup.adaptionwheel.main`) listing all 8 core ported items/blocks. Now confirmed on PR #5 head `d7cbf17` (pushed).
-- **Content declarations (current head):** 3 Horizon block declarations + 8 Horizon item declarations under `data/adaptionwheel/horizon/{block,item}`; 8 `assets/adaptionwheel/items/*.json` model refs present; `assets/adaptionwheel` contains 73 files, `content/adaptation/data` contains 13 files (including 1 creative tab). Prior asset-port audit (earlier session) confirmed 64/64 source files from `../adaptionwheel/src/main/resources/assets/adaptionwheel` present in `content/adaptation/assets/adaptionwheel/**` with Horizon-specific additions.
-- **Worktree notes:** unstaged deletions of `content/adaptation/assets/adaptionwheel/models/entity/DharmaChakra.blend` and `DharmaChakraClean.blend` observed (OBJ counterparts remain; `.blend` sources present in `../adaptionwheel` and copied to untracked `docs/reference/models_entity/` locally). Untracked `docs/AGENT1_API_GAP_AND_READINESS.md` present (not authored by this audit). Treat uncommitted/untracked items separately from PR evidence.
+- **Content/core:** 3 blocks + core items, 8 `assets/adaptionwheel/items/*.json`, single creative tab `main.json`, sounds/lang/core refs, portable loot tables (3), recipes (5), mineable/pickaxe tags. PR #7 schema/build fixes reported build/check ok.
+- **Native:** inventory activation + adaptation scenarios/commands unit-tested; PR #11 adds console command API 99 (tested, runtime unverified); PR #8 adds attachment-backed persistence fallback (unit-tested, runtime semantics unverified).
+- **Parity:** `docs/CONTENT_DATA_PARITY.md` documents portable vs non-portable/blocked data.
+- **Runtime blocker doc:** PR #9 `docs/CONTENT_RUNTIME_BLOCKER.md` records missing Horizon launcher/instance and required runtime evidence.
+- **Readiness/API gaps docs:** PR #6 tracks conditional gaps/drafts.
 
-- **Scoped content additions on PR #5 (Agent #4, pushed):** `dfd10f9` adds 3 block loot tables and 5 core recipes (vanilla datapack format) ported from source; `934e36c` adds mineable/pickaxe tag additions for 3 blocks in mod and minecraft namespaces. These are separate from PR #7 schema/build fixes and from unrelated uncommitted worktree changes.
+## Merge-readiness blockers / gaps (gate)
 
-## Merge-readiness blockers / gaps (for 100% confirmed working)
+1. **No runtime/integration evidence on target Horizon:** mod load, content/assets/tab rendering, inventory activation, player/console commands, adaptation scenarios, login/relog/clone/respawn/persistence — unverified in-game.
+2. **No CI / automated checks:** no PR checks for native tests or content build/check.
+3. **Build/tooling reproducibility gaps:** `cargo-horizon-mod`/native-build unavailable to Agent #4; key claims reported by other agents (documented with SHA/refs) but not independently reproduced here.
+4. **Stack composition risk:** PR #8 and #11 both modify `native/adaptation/api/src/lib.rs` on `#5` base — need conflict resolution, combined build/test, and runtime verification as composed.
+5. **Functional/API/runtime limits:** persistence/sync/mod-messages semantics, console runtime, Curios/accessory slot, keybind/wheel UX, UI/VFX/entity rendering/runtime format support remain conditional/unverified.
+6. **Worktree hygiene:** main worktree has unrelated uncommitted/untracked changes; scoped work must stay on clean branches/worktrees.
 
-1. **Reproducible content build:** run and pass `cargo horizon-mod build` for `content/adaptation` with toolchain evidence.
-2. **Reproducible native build/load:** native-build/dry-run (or equivalent) against compatible Horizon/instance; confirm API/hook compatibility (native pins target `f4d8d62c31` in PR #4 scope).
-3. **Runtime validation (target Horizon):** mod loads; blocks/items/creative tab (single) and assets resolve correctly; wheel activation via inventory snapshot behaves as intended; `/adaptionwheel` commands (`status/activate/reset/grant/set/help` as implemented) respond correctly to player (and console where supported); implemented adaptation scenarios behave as expected.
-4. **CI/automated checks:** add checks for at least `cargo test` (+ content build where possible) to prevent regressions.
-5. **Stack/PR hygiene:** ensure PR #5 contains dedup fix (done on remote branch now), verify composed result with PR #4 base, confirm no duplicate/conflicting content registrations.
-6. **Functional parity limits:** large portions of original mod data/gameplay remain unported or Horizon-limited (e.g. extensive data parity: recipes/loot/tags/advancements/worldgen/structures beyond current, Curios accessory slot, Forge-specific biome modifiers/custom data formats, full adaptation concept coverage, advanced UI/VFX/entity rendering behaviors). Console command handler (`perform_console_command`, API 99) and persistence/attachment-backed state sync require confirmation/implementation per target API.
+## Runtime/CI reproduction requirements
+
+- **Environment:** Rust toolchain, `cargo-horizon-mod` (Horizon tooling), compatible Horizon launcher/client/instance for target `f4d8d62c31` (+ server if needed), log/screenshot/video capture.
+- **Checks/evidence:** `cargo test` (`native/adaptation/api`) on relevant heads/composed state; `cargo-horizon-mod build` + `check --json` for composed content; native build/install/load; in-game checklist (creative tab/items/blocks/textures/models/sounds, loot/recipes/tags, wheel activation 41-slot inventory, `/adaptionwheel` commands player/console, fall/explosion/fire/lava/drown/contact/general scenarios, login/relog/clone/respawn persistence) with commands + SHAs + env versions + artifacts.
+- **CI:** workflows for native tests and content build/check on stack PRs.
 
 ## Horizon API gaps / issue tracking
 
-- Existing draft issue docs in repo: `docs/issues/api-accessory-wheel-slot.md`, `docs/issues/api-input-keybind-actions-wheel.md`, `docs/issues/api-persistence-ergonomics-conditional.md` (prepared in prior PR-1/PR-2 work; validate against current prototype evidence before filing).
-- Upstream mod/API repos referenced historically: `horizon-rust/horizon`, `horizon-rust/horizon-mods`, and tracker discussions (e.g. `arismoko/horizon`) — confirm correct filing target per gap before submission.
+- Draft/readiness: `docs/issues/api-accessory-wheel-slot.md`, `docs/issues/api-input-keybind-actions-wheel.md`, `docs/issues/api-persistence-ergonomics-conditional.md`, `docs/issues/api-mod-messages-native-sync.md`, `docs/AGENT1_API_GAP_AND_READINESS.md`, `docs/CONTENT_RUNTIME_BLOCKER.md`. File upstream issues only with concrete prototype/runtime blocker evidence and correct target repo.
 
-## Next actions (Agent #4)
+## Agent #4 gate recommendation (current)
 
-- Continue content/native registration audits and fix concrete mismatches with evidence.
-- Run/add reproducible checks when tooling becomes available; capture logs/results.
-- Coordinate with Agent #1/#2/#3 on parity criteria, content correctness, and native/runtime evidence for PR #4/#5.
-- Prepare/file justified Horizon API issues only when blockers are evidenced.
+- **Do not merge yet.** Evidence is scoped (unit/content-build, partly cross-agent reported); runtime/integration/CI and combined stack verification are insufficient for 100% confirmed working.
+- **Next:** (1) reconcile/compose PR #8 + #11 on clean base with combined `cargo test` and review; (2) obtain reproducible content/native build and in-game runtime evidence on target Horizon; (3) add CI checks; (4) update PRs/docs with exact commands, SHAs, env, results; (5) rebase/update stack PRs as composition/evidence evolves.
+- **Rebase/update needs (current heads):** no immediate rebase indicated by gh (all MERGEABLE) except composition work for parallel native PRs (#8/#11) and eventual stack alignment after merges/fixes; re-evaluate after any base PR update.
+
