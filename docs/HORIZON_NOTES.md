@@ -64,3 +64,11 @@
 - **Per-player mod state persistence ergonomics** only if Attachment lifecycle/serialization proves insufficient for adaptation-state needs (must include concrete failure/limitation evidence).
 - **Input/keybind registration UX** for ability/wheel actions (if raw hooks insufficient for expected UX).
 - **Advanced UI/render APIs** for future parity (radial wheel, complex VFX) — defer until MVP blockers are proven.
+
+## Agent #2 deep-dive notes (PR-1 validation addendum)
+- **Catalog vs docs:** `docs/native-mods.md` mentions APIs/hooks not present as identically named entries in `native-hooks.json` on this baseline (e.g. text references around `living_incoming_damage_v3`/other damage hooks). Treat `native-hooks.json` as source-of-truth for available hook names/targets/side/cancellable metadata and verify semantics in docs/source before implementation.
+- **Fire/lava/contact coverage:** no dedicated entity-level fire/lava damage hooks identified; likely covered (to be confirmed) via `living_incoming_damage` damage type/source classification. Block/world hooks like `block_ignite`, `block_burn`, `fire_odds`, `fluid_level_change` are environment/block-level, not direct damage-receive hooks.
+- **Drowning/fall:** `living_drown` and `living_fall` confirmed as direct hooks; `block_fall_on` exists for landing/block interaction context.
+- **Movement/surface detection:** no direct powder snow/soul sand movement hooks found. `block_step_on`/`block_entity_inside` are documented as mod-block contacts (API 73) and may not fire for vanilla blocks; `movement_input` is client-side/local input oriented. MVP workaround: server-side polling/derived checks in `player_tick` using position/block queries, with server-authoritative state in attachments and sync to client.
+- **Ticking primitives:** `player_tick` (server, per-player), `server_tick`, `level_tick_pre/post`, generic `tick`, and `entity_tick_*` available for periodic logic/throttling.
+- **Experimental priorities (PR-2):** confirm payload/signature/context for `living_incoming_damage(_v2/_v3 where available)`, `living_drown`, `living_fall`, `player_tick`; verify fire/lava/cactus/magma/powder-snow-freeze damage naming/paths; verify vanilla block behavior for contact hooks; validate `player_clone`/respawn/login behavior for attachment persistence.
