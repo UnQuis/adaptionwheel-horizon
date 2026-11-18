@@ -3,6 +3,7 @@
 _Zone: specs/prioritization (Agent #1). Docs-only reference; no code changes._
 _Sources inspected 2026-11-18: `../adaptionwheel/src/main/java/ru/adaptionwheel/` (upstream Java, NeoForge 1.21.1) and `native/adaptation/api/src/lib.rs` in this repo (combined native PR #12 @ `2f91bdc`, based on PR #5 @ `fc581fff`)._
 _Method: source inspection (`rg`/`read`) plus PR/evidence reports from other agents. No new build/runtime was run for this document; all build/runtime claims below are attributed to their sources._
+_Revision 2026-11-18: native/API facts and PR status refreshed from combined PR #12 `2f91bdc` and partial runtime validation (issue #10, `native-9f42064-67f92751b91f`). See §7 changelog and companion docs (`READINESS_EVIDENCE_REGISTER.md`, `API_GAP_BLOCKER_CHECK.md`, `MIGRATION_WORK_PLAN.md`, `HORIZON_NATIVE_FORMAT_GUIDE.md`)._
 
 ## 0) How to read this map
 
@@ -131,9 +132,10 @@ Registered as OP level 2: `/adaptionwheel status|activate|reset|help`, `/adaptio
 
 ### 3.4 Evidence attached by other agents (not re-run here)
 
-- Native unit tests (PR #12 combined): `cargo check -q PASS`, `cargo test -q` **10 passed / 0 failed**, `CARGO_TARGET_DIR=/mnt/Barracuda/tmp/cargo-target-combo`, integration worktree. 10 tests: `state_defaults_and_summary`, `activation_detects_wheel_anywhere_in_inventory`, `fall_progress_and_mitigation`, `fall_requires_activation`, `explosion_progress_levels_up`, `explosion_damage_classifier`, `damage_type_classification_for_new_concepts`, `leveled_concepts_progress_with_activation`, `commands_set_and_grant_new_concepts`, `damage_adaptation_applies_mitigation_and_progress`.
-- Content (PR #7): `cargo-horizon-mod build/check --json ok:true`, hmod sha256 `5c86ca5f…`, size 975453.
-- Runtime (issue #10, partial): content hmod deployed/enabled; `adaptionwheel:adaptation_wheel` can be given and appears in inventory/held; commands unavailable with the old native. PR #12 native subsequently built/installed as `native-9f42064-67f92751b91f` (per orchestrator); command runtime validation in progress. **No full end-to-end confirmation yet.**
+- Native unit tests (PR #12 combined): `cargo check -q` PASS, `cargo test -q` **10 passed / 0 failed**, `CARGO_TARGET_DIR=/mnt/Barracuda/tmp/cargo-target-combo`, integration worktree (Linux, cargo/rustc 1.99.1). Tests: `state_defaults_and_summary`, `activation_detects_wheel_anywhere_in_inventory`, `fall_progress_and_mitigation`, `fall_requires_activation`, `explosion_progress_levels_up`, `explosion_damage_classifier`, `damage_type_classification_for_new_concepts`, `leveled_concepts_progress_with_activation`, `commands_set_and_grant_new_concepts`, `damage_adaptation_applies_mitigation_and_progress`. #11 (`cac5cf86`) and #8 (`4a0d66b`) each also report 10/10; PR #12 supersedes both (see evidence register).
+- Content (PR #7): `cargo-horizon-mod build` + `check --json ok:true`, hmod sha256 `5c86ca5fe759f4706aacae4a22bab9b2e628e4b492aca84b19cccf8e94a2dc11`, size 975453; later runtime artifacts reference hmod sha `3cee70ad…` (issue #10) — revalidate the final artifact.
+- **Runtime (partial, CONFIRMED per issue #10 + `native/adaptation/README.md`):** PR #12 native built/installed via `horizon-launcher native-build ... --instance adaptionwheel-test --ignore-pins --trust-native-code` as `native-9f42064-67f92751b91f` (~46 s, log `/mnt/Barracuda/tmp/native-build-pr12.log`, `HORIZON_HOME` set to instance home), driven headlessly by `horizon-ctl`: all six `/adaptionwheel` commands respond, inventory-anywhere activation works, state survives quit/relaunch, lava damage progresses `env_lava` to level 1, and death/clone preserves levels. Caveats: creative mode limits mitigation checks; console/sync paths, the full scenario matrix, and revalidation on the final hmod remain pending. Earlier partial check with old native (`199210fc`) showed content/item load only — superseded for native behavior by the PR #12 build.
+- **Not yet confirmed:** full in-game matrix (fall/explosion/fire/drown/contact/general mitigation), mod-net sync/UI, console runtime beyond help, content render/formats on final artifact, CI checks.
 
 ---
 
@@ -164,10 +166,10 @@ Registered as OP level 2: `/adaptionwheel status|activate|reset|help`, `/adaptio
 
 ## 5) Prioritized gaps for the next iteration
 
-### P0 — blocks trust in the current slice / merge-readiness (no code on my side)
-1. **Full runtime validation on the actual installed stack** (PR #12 native `2f91bdc` / `native-9f42064-67f92751b91f` + PR #7 content hmod `5c86ca5f…`): verify `/adaptionwheel` help/status/set/grant/reset, wheel activation from inventory, damage/fall/drown progress and mitigation, attachment save/reload across relog/death/clone. Current evidence is unit tests + partial content/item load only (issue #10).
-2. **Attachment semantics verification** (save/flush timing, `copy_on_death`, player payload limits, schema v1 migration) — required before treating the attachment fallback as authoritative; otherwise keep in-memory fallback explicitly documented.
-3. **Integration revalidation of the merged stack** on final heads (#4→#5→#7/#9/#12), including stacked merge order and clean rebuild, per the orchestrator's gate. No new confirmed Horizon API blocker exists yet — do **not** file upstream issues until a reproducible blocker is captured with target/rev evidence and the channel is confirmed (`horizon-rust/horizon/issues`).
+### P0 — blocks 100% merge-readiness (partial runtime now exists)
+1. **Complete the runtime matrix on the final installed stack** (PR #12 native `2f91bdc`/`native-9f42064-67f92751b91f` + final content hmod): already confirmed — six commands, inventory activation, relaunch persistence, lava progression, death/clone level preservation. Still required — mitigation checks outside creative mode for fall/explosion/fire/drown/contact/general, console behavior beyond help, mod-net sync/UI feedback, content rendering/format checks on the final hmod, and reproducible commands/logs/SHAs per case.
+2. **Attachment semantics closure** (save/flush timing, `copy_on_death`, player payload limits, schema v1 migration): relaunch and clone/death are now evidenced (issue #10), but survival-mode/cross-dimension/server-restart behavior and limits remain unverified; keep the in-memory fallback explicitly documented until closed.
+3. **Integration revalidation of the composed stack on final heads** (proposed order #4→#5→#7→**#12 instead of #8/#11**→#9→#6→docs #13/#14), clean rebuild + combined `cargo check/test` + content build/check + runtime re-run, plus **CI checks** (currently none). No confirmed Horizon API blocker exists (see `API_GAP_BLOCKER_CHECK.md`) — do **not** file upstream issues until a reproducible blocker is captured with target/rev evidence and the channel is confirmed (`horizon-rust/horizon/issues`).
 
 ### P1 — next implementation iteration (parity of core mechanics)
 1. **Concept model generalization**: replace 7 hard-coded constants with a registry carrying domain, leveled/one-time, max level and display id; use upstream ids from `Concepts`/`AdaptationRegistry` as the contract (at minimum add the 15 damage categories + 10 environment + 5 movement + 5 physics ids).
@@ -185,4 +187,16 @@ Registered as OP level 2: `/adaptionwheel status|activate|reset|help`, `/adaptio
 - [x] Every upstream claim in §§1–2 tied to an inspected file/class/method (line references where especially load-bearing).
 - [x] Port claims in §3 tied to `native/adaptation/api/src/lib.rs` symbols; test names/evidence attributed to agent reports, not re-run here.
 - [x] Parity matrix and gaps distinguish `PORTED/PARTIAL/STUB/MISSING/DEFERRED` and avoid claiming unverified runtime behavior.
-- [ ] Re-check after final merge-order decisions and full runtime evidence; update §3/§4/§5 then (owner: Agent #1, after goal resume).
+- [x] (2026-11-18) Runtime facts refreshed from issue #10 + `native/adaptation/README.md`; partial validation is now distinguished from the still-missing full matrix.
+- [ ] Re-check after final merge-order decisions and the complete runtime matrix/CI; update §3.4/§4/§5 then (owner: Agent #1).
+
+## 7) Changelog
+
+- **2026-11-18** — reconciled to combined native PR #12 `2f91bdc` (base `#5@fc581fff`): `perform_console_command` API 99, 41-slot `player_inventory_changed`, attachment `adaptionwheel:player_state` (JSON-in-NBT, `copy_on_death`, load/sync/flush), `living_incoming_damage_v3`/`living_fall`/`living_drown`. Refreshed PR stack (#4 `cf987c0`, #5 `fc581fff`, #6 `3a715bb`, #7 `3f044c5`, #8 `4a0d66b`, #9 `9ce3432`, #11 `cac5cf86`, #12 `2f91bdc`, #13 `c0b0569`, #14 `f2db6f3`) and runtime status (partial confirmation per issue #10; full matrix/CI still open). Upstream Horizon `main` mod API is being restructured (`horizon-mod-vocab`/`horizon-mod-api-gen`, attachments in `horizon-mod-runtime`, `#[mod_api::horizon_mod]`/`Registrar`) — tracked as a separate migration; see `HORIZON_NATIVE_FORMAT_GUIDE.md`.
+
+## 8) Companion docs (Ensemble docs/readiness integration)
+
+- `docs/READINESS_EVIDENCE_REGISTER.md` — per-PR confirmed vs claimed evidence and remaining gates (S2).
+- `docs/API_GAP_BLOCKER_CHECK.md` — no confirmed Horizon API blocker; candidate gaps and evidence needed (S3).
+- `docs/MIGRATION_WORK_PLAN.md` — prioritized P0/P1/P2 work plan with owners/evidence gates (S5).
+- `docs/HORIZON_NATIVE_FORMAT_GUIDE.md` — Horizon native packaging/format guide (S4).
