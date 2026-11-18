@@ -6,6 +6,11 @@
 //! `state_impl.rs`. All logic here is a faithful port of the frozen v1
 //! adaptation core so that it can be unit-tested in isolation.
 
+use crate::concepts_registry::{
+    AdaptationDefinition, all_ids as registry_ids, get as registry_get,
+    is_level_based as registry_is_level_based, is_one_time as registry_is_one_time,
+};
+use crate::damage_categories::{DamageCategory, categorize, is_lava_damage};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -119,12 +124,19 @@ impl PlayerAdaptationStateV1 {
 
     #[allow(dead_code)]
     pub fn concept_completed(&self, concept: &str) -> bool {
-        self.entries.get(concept).map(|e| e.completed).unwrap_or(false)
+        self.entries
+            .get(concept)
+            .map(|e| e.completed)
+            .unwrap_or(false)
     }
 
     pub fn summary(&self) -> String {
         let fall = self.entries.get(CONCEPT_FALL).cloned().unwrap_or_default();
-        let expl = self.entries.get(CONCEPT_EXPLOSION).cloned().unwrap_or_default();
+        let expl = self
+            .entries
+            .get(CONCEPT_EXPLOSION)
+            .cloned()
+            .unwrap_or_default();
         format!(
             "wheel={} ({:?}) | fall lvl={} prog={:.1}/{} done={} | explosion lvl={}/{} prog={:.1} done={} | fire lvl={} | lava lvl={} | general lvl={} | drowning lvl={} | contact lvl={}",
             self.wheel_active,
@@ -184,8 +196,63 @@ pub fn activation_from_item_ids(ids: &[Option<String>]) -> ActivationScan {
 
 // --- Concepts, thresholds, mitigation ---
 
+/// Map a frozen-v1 legacy concept id to the canonical upstream registry id.
+///
+/// The canonical spellings are the exact ids from upstream `Concepts` /
+/// `AdaptationRegistry`. `legacy_id` is the inverse. `type_contact` and
+/// `type_general` map to *distinct* canonical ids (`Contact_CACTUS` and
+/// `Type_OTHER`) so that all seven legacy ids round-trip losslessly; upstream
+/// folds both into the single `Type_OTHER` family.
+///
+/// Ids that are not one of the seven legacy concepts (including ids that are
+/// already canonical) pass through unchanged. The signature returns
+/// `&'static str`, so the borrowed input is interned on that path; the engine
+/// only ever calls this with the seven legacy ids above, so the interning path
+/// is reached only by one-off command/UI lookups.
+pub fn canonical_id(legacy: &str) -> &'static str {
+    match legacy {
+        CONCEPT_FALL => "Env_FallDamage",
+        CONCEPT_EXPLOSION => "Type_EXPLOSION",
+        CONCEPT_FIRE => "Env_Fire",
+        CONCEPT_LAVA => "Env_Lava",
+        CONCEPT_DROWNING => "Env_Drowning",
+        CONCEPT_CONTACT => "Contact_CACTUS",
+        CONCEPT_GENERAL => "Type_OTHER",
+        other => Box::leak(other.to_string().into_boxed_str()),
+    }
+}
+
+/// Reverse of [`canonical_id`]: canonical registry id to the frozen-v1 concept
+/// id used by state / commands / hooks. Unknown canonical ids return `None`.
+pub fn legacy_id(canonical: &str) -> Option<&'static str> {
+    match canonical {
+        "Env_FallDamage" => Some(CONCEPT_FALL),
+        "Type_EXPLOSION" => Some(CONCEPT_EXPLOSION),
+        "Env_Fire" => Some(CONCEPT_FIRE),
+        "Env_Lava" => Some(CONCEPT_LAVA),
+        "Env_Drowning" => Some(CONCEPT_DROWNING),
+        "Contact_CACTUS" => Some(CONCEPT_CONTACT),
+        "Type_OTHER" => Some(CONCEPT_GENERAL),
+        _ => None,
+    }
+}
+
+/// Consult the canonical concept registry for a legacy concept id.
+pub fn registry_def(concept: &str) -> Option<&'static AdaptationDefinition> {
+    registry_get(canonical_id(concept))
+}
+
+/// Every canonical concept id, for command suggestions / UI enumeration.
+pub fn registry_all_ids() -> Vec<&'static str> {
+    registry_ids().collect()
+}
+
 pub fn concept_max_level(concept: &str) -> u8 {
-    match concept {
+    // Authoritative numeric fallback: the frozen v1 cap (fall = 1, the six
+    // leveled concepts = 3, unknown = 1). Registry metadata is consulted, but
+    // never allowed to change the v1 numbers that saves and the 10 legacy tests
+    // depend on.
+    let v1_cap = match concept {
         CONCEPT_FALL => 1,
         CONCEPT_EXPLOSION => EXPLOSION_MAX_LEVEL_MVP,
         CONCEPT_FIRE => FIRE_MAX_LEVEL,
@@ -194,10 +261,30 @@ pub fn concept_max_level(concept: &str) -> u8 {
         CONCEPT_DROWNING => DROWNING_MAX_LEVEL,
         CONCEPT_CONTACT => CONTACT_MAX_LEVEL,
         _ => 1,
+    };
+    let canonical = canonical_id(concept);
+    if let Some(def) = registry_get(canonical) {
+        if registry_is_one_time(canonical) && v1_cap == 1 {
+            // A one-time registry concept grants at most one level; v1's only
+            // one-time concept is fall (cap 1).
+            return 1;
+        }
+        if registry_is_level_based(canonical) {
+            // Upstream level ladders cap at MAX_LEVEL = 8. The frozen v1 engine
+            // caps every leveled concept at 3 (all six *_MAX_LEVEL constants).
+            // We deliberately map the registry's 8 down to the v1 cap so that
+            // progress, commands, saves and all legacy tests stay identical.
+            return def.max_level.min(v1_cap).max(1);
+        }
     }
+    v1_cap
 }
 
 pub fn leveled_threshold(concept: &str, level: u8) -> f32 {
+    // Consult the registry for the canonical concept metadata. The registry has
+    // no threshold curve — the v1 curve is bespoke per concept — so the frozen
+    // table below remains the authoritative fallback and behavior is unchanged.
+    let _registry_def = registry_get(canonical_id(concept));
     let l = level as f32;
     match concept {
         CONCEPT_EXPLOSION => 30.0 + l * 10.0,
@@ -211,78 +298,137 @@ pub fn leveled_threshold(concept: &str, level: u8) -> f32 {
 }
 
 pub fn leveled_reduction(concept: &str, level: u8) -> f32 {
+    // The canonical registry and damage-category modules are consulted, but the
+    // frozen v1 reduction table stays authoritative for the seven legacy ids:
+    // saves and the legacy tests depend on these exact percentages. The new
+    // module's curve is used only as a fallback for registry-known leveled
+    // concepts that have no v1 table entry (where no v1 expectation exists).
+    let canonical = canonical_id(concept);
+    let known_leveled = registry_get(canonical).is_some() && registry_is_level_based(canonical);
     match concept {
-        CONCEPT_EXPLOSION => match level { 0 => 0.0, 1 => 0.10, 2 => 0.20, _ => 0.35 },
-        CONCEPT_FIRE => match level { 0 => 0.0, 1 => 0.15, 2 => 0.30, _ => 0.45 },
-        CONCEPT_LAVA => match level { 0 => 0.0, 1 => 0.20, 2 => 0.35, _ => 0.50 },
-        CONCEPT_GENERAL => match level { 0 => 0.0, 1 => 0.10, 2 => 0.20, _ => 0.30 },
-        CONCEPT_DROWNING => match level { 0 => 0.0, 1 => 0.25, 2 => 0.50, _ => 0.75 },
-        CONCEPT_CONTACT => match level { 0 => 0.0, 1 => 0.20, 2 => 0.35, _ => 0.50 },
+        CONCEPT_EXPLOSION => match level {
+            0 => 0.0,
+            1 => 0.10,
+            2 => 0.20,
+            _ => 0.35,
+        },
+        CONCEPT_FIRE => match level {
+            0 => 0.0,
+            1 => 0.15,
+            2 => 0.30,
+            _ => 0.45,
+        },
+        CONCEPT_LAVA => match level {
+            0 => 0.0,
+            1 => 0.20,
+            2 => 0.35,
+            _ => 0.50,
+        },
+        CONCEPT_GENERAL => match level {
+            0 => 0.0,
+            1 => 0.10,
+            2 => 0.20,
+            _ => 0.30,
+        },
+        CONCEPT_DROWNING => match level {
+            0 => 0.0,
+            1 => 0.25,
+            2 => 0.50,
+            _ => 0.75,
+        },
+        CONCEPT_CONTACT => match level {
+            0 => 0.0,
+            1 => 0.20,
+            2 => 0.35,
+            _ => 0.50,
+        },
+        _ if known_leveled => crate::damage_categories::mitigation_level_reduction(
+            categorize(concept),
+            level,
+            concept_max_level(concept),
+        ),
         _ => 0.0,
     }
 }
 
 pub fn is_explosion_damage_type(damage_type: &str) -> bool {
-    let t = damage_type.to_ascii_lowercase();
-    t.contains("explosion") || t.contains("blast") || t.contains("fireworks") || t.contains("bad_respawn_point")
+    // Delegate the source match to the canonical categorizer; preserve the
+    // legacy `bad_respawn_point` token the v1 heuristic accepted (the canonical
+    // table does not list it).
+    categorize(damage_type) == DamageCategory::Explosion
+        || damage_type
+            .to_ascii_lowercase()
+            .contains("bad_respawn_point")
 }
 
 pub fn is_fall_damage_type(damage_type: &str) -> bool {
-    damage_type.to_ascii_lowercase().contains("fall")
+    // Canonical Fall category; keep v1's looser substring match for modded ids.
+    categorize(damage_type) == DamageCategory::Fall
+        || damage_type.to_ascii_lowercase().contains("fall")
 }
 
 pub fn is_lava_damage_type(damage_type: &str) -> bool {
-    let t = damage_type.to_ascii_lowercase();
-    t == "lava" || t.ends_with(":lava") || t.contains("lava")
+    // Canonical dedicated lava predicate; keep v1's looser substring match so
+    // ids such as `minecraft:lava_bucket` stay in the lava family.
+    is_lava_damage(damage_type) || damage_type.to_ascii_lowercase().contains("lava")
 }
 
 pub fn is_fire_damage_type(damage_type: &str) -> bool {
-    let t = damage_type.to_ascii_lowercase();
-    // lava treated separately; "hot_floor" (magma) treated as fire-like
-    matches!(t.as_str(), "fire" | "in_fire" | "on_fire" | "hot_floor" | "campfire" | "fireball" | "unattributed_fireball")
-        || t.ends_with(":fire")
-        || t.ends_with(":in_fire")
-        || t.ends_with(":on_fire")
-        || t.ends_with(":hot_floor")
-        || t.ends_with(":campfire")
-        || t.ends_with(":fireball")
-        || t.ends_with(":unattributed_fireball")
-        || (t.contains("fire") && !t.contains("firework"))
+    // Canonical Fire category. Lava is folded into Fire by the categorizer but
+    // is a separate v1 concept, so it is excluded here (v1 also excluded lava
+    // from the fire family).
+    categorize(damage_type) == DamageCategory::Fire
+        && !is_lava_damage(damage_type)
+        && !damage_type.to_ascii_lowercase().contains("lava")
 }
 
 pub fn is_drowning_damage_type(damage_type: &str) -> bool {
-    let t = damage_type.to_ascii_lowercase();
-    t == "drown" || t.ends_with(":drown") || t.contains("drown")
+    categorize(damage_type) == DamageCategory::Drown
 }
 
 pub fn is_contact_damage_type(damage_type: &str) -> bool {
     let t = damage_type.to_ascii_lowercase();
-    matches!(t.as_str(), "cactus" | "sweet_berry_bush" | "stalagmite" | "contact")
-        || t.ends_with(":cactus")
-        || t.ends_with(":sweet_berry_bush")
-        || t.ends_with(":stalagmite")
-        || t.contains("cactus")
-        || t.contains("sweet_berry_bush")
-        || t.contains("stalagmite")
+    categorize(damage_type) == DamageCategory::Contact || t == "contact" || t.ends_with(":contact")
 }
 
 /// Primary concept for a damage event (used for progress/mitigation). Fall is
 /// handled by the living_fall hook; this is only a fallback for damage hook delivery.
+///
+/// The source itself is classified by the canonical `damage_categories` module;
+/// its `DamageCategory` (and `env_immunity_concept` metadata) is translated back
+/// into the frozen v1 legacy concept ids that state / commands / hooks consume.
 pub fn classify_damage_concept(damage_type: &str) -> Option<&'static str> {
-    if is_explosion_damage_type(damage_type) {
-        Some(CONCEPT_EXPLOSION)
-    } else if is_fall_damage_type(damage_type) {
-        Some(CONCEPT_FALL)
-    } else if is_lava_damage_type(damage_type) {
-        Some(CONCEPT_LAVA)
-    } else if is_fire_damage_type(damage_type) {
-        Some(CONCEPT_FIRE)
-    } else if is_drowning_damage_type(damage_type) {
-        Some(CONCEPT_DROWNING)
-    } else if is_contact_damage_type(damage_type) {
-        Some(CONCEPT_CONTACT)
-    } else {
-        Some(CONCEPT_GENERAL)
+    use crate::damage_categories as dc;
+
+    // Lava is folded into the Fire category by the canonical table, but v1
+    // keeps it as its own concept; the dedicated predicate restores the split.
+    if is_lava_damage_type(damage_type) {
+        return Some(CONCEPT_LAVA);
+    }
+    // v1 also treated the non-vanilla `bad_respawn_point` token as an explosion;
+    // the canonical table has no entry for it, so preserve it explicitly.
+    if is_explosion_damage_type(damage_type)
+        && damage_type
+            .to_ascii_lowercase()
+            .contains("bad_respawn_point")
+    {
+        return Some(CONCEPT_EXPLOSION);
+    }
+
+    let category = dc::categorize(damage_type);
+    // One-time `Env_*` immunity metadata, mapped back to legacy ids where a
+    // direct mapping exists (Fall / Fire / Drown).
+    let env_legacy = dc::env_immunity_concept(category).and_then(legacy_id);
+
+    match category {
+        dc::DamageCategory::Explosion => Some(CONCEPT_EXPLOSION),
+        dc::DamageCategory::Fall => Some(env_legacy.unwrap_or(CONCEPT_FALL)),
+        dc::DamageCategory::Fire => Some(env_legacy.unwrap_or(CONCEPT_FIRE)),
+        dc::DamageCategory::Drown => Some(env_legacy.unwrap_or(CONCEPT_DROWNING)),
+        dc::DamageCategory::Contact => Some(env_legacy.unwrap_or(CONCEPT_CONTACT)),
+        // Categories with no v1 concept (wither, freeze, projectile, mob, ...)
+        // and the unrecognised residue all map to the general concept.
+        _ => Some(CONCEPT_GENERAL),
     }
 }
 
@@ -322,7 +468,9 @@ pub fn apply_leveled_progress(
     let changed = before.0 != entry.level
         || (before.1 - entry.progress).abs() > f32::EPSILON
         || before.2 != entry.completed;
-    if changed { state.dirty_persist = true; }
+    if changed {
+        state.dirty_persist = true;
+    }
     changed
 }
 
@@ -331,6 +479,12 @@ pub fn mitigation_factor_for_concept(state: &PlayerAdaptationStateV1, concept: &
         return fall_mitigation_factor(state);
     }
     let level = state.concept_level(concept);
+    // `leveled_reduction` consults both the concept registry and the canonical
+    // `damage_categories::mitigation_level_reduction` curve. For the seven legacy
+    // concepts the exact v1 table is kept authoritative (the new curve would
+    // change numeric percentages even though the only mitigation assertion in
+    // the legacy tests is "mitigated amount < raw amount"), so this is a pure
+    // delegation-with-fallback and behavior is unchanged.
     let reduction = leveled_reduction(concept, level);
     (1.0 - reduction).clamp(0.0, 1.0)
 }
@@ -355,11 +509,16 @@ pub fn apply_fall_progress(state: &mut PlayerAdaptationStateV1, distance_or_dama
         entry.completed = true;
     }
     let changed = (entry.progress - before).abs() > f32::EPSILON || entry.completed;
-    if changed { state.dirty_persist = true; }
+    if changed {
+        state.dirty_persist = true;
+    }
     changed
 }
 
 pub fn fall_mitigation_factor(state: &PlayerAdaptationStateV1) -> f32 {
+    // Fall is a one-time registry immunity (`Env_FallDamage`, max_level 1), not
+    // a leveled curve, so `damage_categories::mitigation_level_reduction` does
+    // not apply; the frozen v1 binary factor stays authoritative.
     if state
         .entries
         .get(CONCEPT_FALL)
@@ -373,7 +532,13 @@ pub fn fall_mitigation_factor(state: &PlayerAdaptationStateV1) -> f32 {
 }
 
 pub fn apply_explosion_progress(state: &mut PlayerAdaptationStateV1, amount: f32) -> bool {
-    apply_leveled_progress(state, CONCEPT_EXPLOSION, amount, EXPLOSION_MAX_LEVEL_MVP, 20.0)
+    apply_leveled_progress(
+        state,
+        CONCEPT_EXPLOSION,
+        amount,
+        EXPLOSION_MAX_LEVEL_MVP,
+        20.0,
+    )
 }
 
 /// Pure form of v1 `apply_damage_adaptation_for_player`: the per-player state
@@ -383,7 +548,9 @@ pub fn apply_damage_adaptation(
     damage_type: &str,
     amount: &mut f32,
 ) {
-    let Some(concept) = classify_damage_concept(damage_type) else { return; };
+    let Some(concept) = classify_damage_concept(damage_type) else {
+        return;
+    };
     let factor = mitigation_factor_for_concept(state, concept);
     if *amount > 0.0 {
         *amount *= factor;
@@ -402,13 +569,16 @@ pub fn apply_damage_adaptation(
             let _ = apply_leveled_progress(state, CONCEPT_LAVA, *amount, LAVA_MAX_LEVEL, 12.0);
         }
         CONCEPT_DROWNING => {
-            let _ = apply_leveled_progress(state, CONCEPT_DROWNING, *amount, DROWNING_MAX_LEVEL, 8.0);
+            let _ =
+                apply_leveled_progress(state, CONCEPT_DROWNING, *amount, DROWNING_MAX_LEVEL, 8.0);
         }
         CONCEPT_CONTACT => {
-            let _ = apply_leveled_progress(state, CONCEPT_CONTACT, *amount, CONTACT_MAX_LEVEL, 10.0);
+            let _ =
+                apply_leveled_progress(state, CONCEPT_CONTACT, *amount, CONTACT_MAX_LEVEL, 10.0);
         }
         CONCEPT_GENERAL => {
-            let _ = apply_leveled_progress(state, CONCEPT_GENERAL, *amount, GENERAL_MAX_LEVEL, 15.0);
+            let _ =
+                apply_leveled_progress(state, CONCEPT_GENERAL, *amount, GENERAL_MAX_LEVEL, 15.0);
         }
         _ => {}
     }
@@ -427,7 +597,11 @@ pub fn format_status(state: &PlayerAdaptationStateV1) -> String {
         let extra = if c == CONCEPT_FALL {
             format!(" prog={:.2}/{}", e.progress, FALL_THRESHOLD)
         } else if e.level < max && !e.completed {
-            format!(" prog={:.2}/{:.2}", e.progress, leveled_threshold(c, e.level))
+            format!(
+                " prog={:.2}/{:.2}",
+                e.progress,
+                leveled_threshold(c, e.level)
+            )
         } else {
             String::new()
         };
@@ -452,7 +626,9 @@ pub fn normalize_concept(input: &str) -> Option<&'static str> {
     }
 }
 
-pub fn clamp_fall_progress(v: f32) -> f32 { v.clamp(0.0, FALL_THRESHOLD) }
+pub fn clamp_fall_progress(v: f32) -> f32 {
+    v.clamp(0.0, FALL_THRESHOLD)
+}
 
 pub fn apply_set_command(
     state: &mut PlayerAdaptationStateV1,
@@ -493,7 +669,8 @@ pub fn apply_set_command(
                 _ => Err("field must be 'level' or 'progress'".to_string()),
             }
         }
-        CONCEPT_EXPLOSION | CONCEPT_FIRE | CONCEPT_LAVA | CONCEPT_GENERAL | CONCEPT_DROWNING | CONCEPT_CONTACT => {
+        CONCEPT_EXPLOSION | CONCEPT_FIRE | CONCEPT_LAVA | CONCEPT_GENERAL | CONCEPT_DROWNING
+        | CONCEPT_CONTACT => {
             let e = state.entry_mut(concept);
             match field.as_str() {
                 "level" => {
@@ -549,7 +726,8 @@ pub fn apply_grant_command(
                 Ok("set env_fall to level 0".to_string())
             }
         }
-        CONCEPT_EXPLOSION | CONCEPT_FIRE | CONCEPT_LAVA | CONCEPT_GENERAL | CONCEPT_DROWNING | CONCEPT_CONTACT => {
+        CONCEPT_EXPLOSION | CONCEPT_FIRE | CONCEPT_LAVA | CONCEPT_GENERAL | CONCEPT_DROWNING
+        | CONCEPT_CONTACT => {
             let lvl = level.min(max_level);
             let e = state.entry_mut(concept);
             e.level = lvl;
@@ -648,12 +826,30 @@ mod tests {
 
     #[test]
     fn damage_type_classification_for_new_concepts() {
-        assert_eq!(classify_damage_concept("minecraft:in_fire"), Some(CONCEPT_FIRE));
-        assert_eq!(classify_damage_concept("minecraft:lava"), Some(CONCEPT_LAVA));
-        assert_eq!(classify_damage_concept("minecraft:drown"), Some(CONCEPT_DROWNING));
-        assert_eq!(classify_damage_concept("minecraft:cactus"), Some(CONCEPT_CONTACT));
-        assert_eq!(classify_damage_concept("minecraft:mob_attack"), Some(CONCEPT_GENERAL));
-        assert_eq!(classify_damage_concept("minecraft:explosion"), Some(CONCEPT_EXPLOSION));
+        assert_eq!(
+            classify_damage_concept("minecraft:in_fire"),
+            Some(CONCEPT_FIRE)
+        );
+        assert_eq!(
+            classify_damage_concept("minecraft:lava"),
+            Some(CONCEPT_LAVA)
+        );
+        assert_eq!(
+            classify_damage_concept("minecraft:drown"),
+            Some(CONCEPT_DROWNING)
+        );
+        assert_eq!(
+            classify_damage_concept("minecraft:cactus"),
+            Some(CONCEPT_CONTACT)
+        );
+        assert_eq!(
+            classify_damage_concept("minecraft:mob_attack"),
+            Some(CONCEPT_GENERAL)
+        );
+        assert_eq!(
+            classify_damage_concept("minecraft:explosion"),
+            Some(CONCEPT_EXPLOSION)
+        );
     }
 
     #[test]
@@ -664,9 +860,12 @@ mod tests {
         for _ in 0..20 {
             changed |= apply_leveled_progress(&mut s, CONCEPT_FIRE, 10.0, FIRE_MAX_LEVEL, 12.0);
             changed |= apply_leveled_progress(&mut s, CONCEPT_LAVA, 10.0, LAVA_MAX_LEVEL, 12.0);
-            changed |= apply_leveled_progress(&mut s, CONCEPT_GENERAL, 10.0, GENERAL_MAX_LEVEL, 15.0);
-            changed |= apply_leveled_progress(&mut s, CONCEPT_CONTACT, 8.0, CONTACT_MAX_LEVEL, 10.0);
-            changed |= apply_leveled_progress(&mut s, CONCEPT_DROWNING, 6.0, DROWNING_MAX_LEVEL, 8.0);
+            changed |=
+                apply_leveled_progress(&mut s, CONCEPT_GENERAL, 10.0, GENERAL_MAX_LEVEL, 15.0);
+            changed |=
+                apply_leveled_progress(&mut s, CONCEPT_CONTACT, 8.0, CONTACT_MAX_LEVEL, 10.0);
+            changed |=
+                apply_leveled_progress(&mut s, CONCEPT_DROWNING, 6.0, DROWNING_MAX_LEVEL, 8.0);
         }
         assert!(changed);
         assert!(s.concept_level(CONCEPT_FIRE) >= 1);
@@ -699,5 +898,78 @@ mod tests {
         apply_damage_adaptation(&mut s, "minecraft:in_fire", &mut amount);
         assert!(amount < 10.0); // mitigation from level 2
         assert!(s.entries[CONCEPT_FIRE].progress >= 0.0);
+    }
+
+    #[test]
+    fn canonical_and_legacy_id_round_trips() {
+        let pairs = [
+            (CONCEPT_FALL, "Env_FallDamage"),
+            (CONCEPT_EXPLOSION, "Type_EXPLOSION"),
+            (CONCEPT_FIRE, "Env_Fire"),
+            (CONCEPT_LAVA, "Env_Lava"),
+            (CONCEPT_DROWNING, "Env_Drowning"),
+            (CONCEPT_CONTACT, "Contact_CACTUS"),
+            (CONCEPT_GENERAL, "Type_OTHER"),
+        ];
+        for (legacy, canonical) in pairs {
+            assert_eq!(canonical_id(legacy), canonical);
+            assert_eq!(legacy_id(canonical), Some(legacy));
+            assert_eq!(legacy_id(canonical_id(legacy)), Some(legacy));
+        }
+        // Ids that are already canonical (or unknown) pass through unchanged.
+        assert_eq!(canonical_id("Type_MOB"), "Type_MOB");
+        assert_eq!(canonical_id("something_unknown"), "something_unknown");
+        assert_eq!(legacy_id("Type_MOB"), None);
+        assert_eq!(legacy_id("something_unknown"), None);
+    }
+
+    #[test]
+    fn registry_helpers_expose_canonical_metadata() {
+        assert!(registry_all_ids().len() >= 40);
+        assert_eq!(registry_def(CONCEPT_FALL).map(|d| d.max_level), Some(1));
+        assert!(registry_def(CONCEPT_EXPLOSION).is_some());
+        assert!(registry_def("no_such_concept").is_none());
+        // v1 caps are preserved even though the registry ladders cap at 8.
+        assert_eq!(
+            concept_max_level(CONCEPT_EXPLOSION),
+            EXPLOSION_MAX_LEVEL_MVP
+        );
+        assert_eq!(concept_max_level(CONCEPT_FIRE), FIRE_MAX_LEVEL);
+        assert_eq!(concept_max_level(CONCEPT_FALL), 1);
+    }
+
+    #[test]
+    fn classify_damage_concept_delegates_to_damage_categories() {
+        use crate::damage_categories::DamageCategory as Cat;
+        use crate::damage_categories::categorize;
+
+        let cases: &[(&str, Cat, &str)] = &[
+            ("minecraft:explosion", Cat::Explosion, CONCEPT_EXPLOSION),
+            ("minecraft:fall", Cat::Fall, CONCEPT_FALL),
+            ("minecraft:in_fire", Cat::Fire, CONCEPT_FIRE),
+            ("minecraft:drown", Cat::Drown, CONCEPT_DROWNING),
+            ("minecraft:cactus", Cat::Contact, CONCEPT_CONTACT),
+            ("minecraft:mob_attack", Cat::Mob, CONCEPT_GENERAL),
+            ("minecraft:generic", Cat::Other, CONCEPT_GENERAL),
+        ];
+        for (id, expected_category, expected_concept) in cases {
+            assert_eq!(categorize(id), *expected_category, "category for {id}");
+            assert_eq!(
+                classify_damage_concept(id),
+                Some(*expected_concept),
+                "concept for {id}"
+            );
+        }
+        // Lava is folded into Fire by the categorizer but stays a distinct
+        // legacy concept via the dedicated is_lava_damage predicate.
+        assert_eq!(categorize("minecraft:lava"), Cat::Fire);
+        assert_eq!(
+            classify_damage_concept("minecraft:lava"),
+            Some(CONCEPT_LAVA)
+        );
+        assert_eq!(
+            classify_damage_concept("minecraft:fireball"),
+            Some(CONCEPT_FIRE)
+        );
     }
 }

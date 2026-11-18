@@ -11,6 +11,6 @@ crate-type = ["rlib"]
 [dependencies]
 # New mod API (lib name `mod_api`) straight from the pinned Horizon source:
 # no signed SDK release is required, unlike `cargo horizon-mod new` + `.horizon/sdk`.
-horizon-mod-api = { git = "https://github.com/horizon-rust/horizon", rev = "8bc19c5f979b3724526a869393f2862904cea566" }
+horizon-mod-api = { git = "https://github.com/horizon-rust/horizon", rev = "8bc19c5f979b3724526a869393f2862904cea566", features = ["testing"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

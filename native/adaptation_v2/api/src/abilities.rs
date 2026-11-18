@@ -42,8 +42,18 @@
 //!    mutations have a stable id — register the real behaviour before exposing
 //!    them to players. `with_builtins()` mirrors Java's `commonSetup` registration;
 //!    `new()`/`Default` start empty (deterministic tests).
+//! 6. **There is no universal activation key in this port.** Horizon `8bc19c5f97`
+//!    exposes no shared keybind / input payload that reaches the server for
+//!    "activate the selected ability" — adaptation state lives in `PlayerAdaption`
+//!    (concepts/levels) and the choice in `Extras.selectedAbility`, but there is
+//!    no activation packet. Activation is therefore available **ONLY** through
+//!    the command path `/adaptionwheel wheel` (plus the optional raw-line
+//!    `ability <id>` / `activate` diagnostic subcommands added below). See
+//!    [`activation_key_help`] for the exact wording; hooks should reach
+//!    [`activate_for_hook`] only as the server-side consequence of such a
+//!    command, never from a key event.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 // ===========================================================================
 // P1.5 — Active ability dispatch
@@ -247,13 +257,110 @@ fn unlock_mutation(is_active: &dyn Fn(&str) -> bool) -> bool {
 fn activate_noop() {}
 
 // ===========================================================================
+// P1.5 — Integration-ready helpers (pure; no mod_api)
+// ===========================================================================
+
+/// Builds the read-only `is_active` view consumed by every `AbilityDispatch`
+/// method from a snapshot of the player's adaptation data.
+///
+/// A concept is reported active when it is in `adapted` **or** has a positive
+/// stored level in `levels` — the same union `PlayerAdaptionV2::get_adapt_count`
+/// uses, so one-time gates (`Env_FallDamage`, `Mutation_Flight`, ...) and any
+/// future level-based gate both work. The caller must pass only **enabled**
+/// concepts: upstream `PlayerAdaption::active` also requires `!disabled`, so
+/// filter toggle-off ids out of `adapted` and/or use `level_or_zero` when
+/// producing these two collections.
+///
+/// The returned closure borrows both collections, so it is valid only as long
+/// as the snapshot; build it and use it within the same hook tick.
+pub fn active_predicate_from_levels<'a>(
+    levels: &'a BTreeMap<String, u8>,
+    adapted: &'a BTreeSet<String>,
+) -> impl Fn(&str) -> bool + 'a {
+    move |concept| adapted.contains(concept) || levels.get(concept).copied().unwrap_or(0) > 0
+}
+
+/// Named thin wrapper around an `is_active` view: "is `concept` active for this
+/// player right now?". Provided so integration code has a single documented
+/// query point instead of invoking the borrowed closure directly.
+pub fn ability_is_active(is_active: &dyn Fn(&str) -> bool, concept: &str) -> bool {
+    is_active(concept)
+}
+
+/// Player-visible confirmation emitted through `host.commands().feedback` /
+/// `player.tell` when a selection or activation is synced immediately.
+///
+/// The `sync: &mut dyn FnMut(String)` callback passed to [`AbilityDispatch::select`],
+/// [`AbilityDispatch::activate`] and [`activate_for_hook`] carries the **raw
+/// ability id** — that is the value the lead maps onto the host's `syncAdaption`.
+/// This helper formats the human-readable companion line; it is not itself a
+/// network payload.
+pub fn immediate_sync_message(ability_id: &str) -> String {
+    format!("[adaptionwheel] ability synced: {}", ability_id)
+}
+
+/// A ready-made registry with the built-ins already registered. Hooks can hold
+/// one of these for the mod's lifetime (e.g. behind a `OnceLock<Mutex<_>>`)
+/// instead of rebuilding it on every event.
+pub fn builtin_dispatch() -> AbilityDispatch {
+    AbilityDispatch::with_builtins()
+}
+
+/// Front door for hook code that activates the currently selected ability.
+///
+/// A thin wrapper over [`AbilityDispatch::activate`] with the same conditions
+/// and errors (`"wheel not worn"`, `"no unlocked ability available"`,
+/// `"ability '<id>' is locked"`). `sync` maps to **immediate host feedback /
+/// sync**: pass a closure that forwards its `String` to
+/// `host.commands().feedback(Text::literal(immediate_sync_message(id)))` and/or
+/// `player.tell`, and performs the host-side `syncAdaption` with that same raw
+/// id. No deferred 1 Hz sync tick exists in this layer.
+///
+/// Remember: there is no activation key event to call this from — invoke it only
+/// as the server-side consequence of the command path described in
+/// [`activation_key_help`].
+pub fn activate_for_hook(
+    dispatch: &mut AbilityDispatch,
+    wheel_worn: bool,
+    is_active: &dyn Fn(&str) -> bool,
+    sync: &mut dyn FnMut(String),
+) -> Result<String, String> {
+    dispatch.activate(wheel_worn, is_active, sync)
+}
+
+/// Exact wording for `/adaptionwheel help` / diagnostics about how — and only
+/// how — an active ability can be triggered in this port.
+pub fn activation_key_help() -> &'static str {
+    concat!(
+        "activation: Horizon 8bc19c5f97 has no universal activation key or input ",
+        "payload in this port — the mod API exposes no shared keybind/activation ",
+        "packet reaching the server, and adaptation state only stores concepts, ",
+        "levels and Extras.selectedAbility. Activation is available ONLY through ",
+        "the command path `/adaptionwheel wheel` (wear/toggle the wheel to fire ",
+        "the selected ability). Optionally the raw-line subcommands ",
+        "`/adaptionwheel ability <id>` (select) and `/adaptionwheel activate` ",
+        "(fire) are recognised by handle_diagnostic; route their Mutate outcomes ",
+        "to activate_for_hook. There is no key hook to wire."
+    )
+}
+
+// ===========================================================================
 // P1.6 — Diagnostic command responder
 // ===========================================================================
 
 /// Domain keys in Java `AdaptationDomain` enum-ordinal order.
 pub const DOMAIN_KEYS: [&str; 11] = [
-    "damage", "effect", "movement", "physics", "mining", "environment", "combat", "perception",
-    "entity", "existence", "special",
+    "damage",
+    "effect",
+    "movement",
+    "physics",
+    "mining",
+    "environment",
+    "combat",
+    "perception",
+    "entity",
+    "existence",
+    "special",
 ];
 
 /// The read-only snapshot `handle_diagnostic` needs. The lead fills this from
@@ -283,6 +390,11 @@ pub enum MutationKind {
     Ungrant,
     /// `analyze <concept>` (start an analysis task).
     Analyze,
+    /// `ability <id>`; `concept` holds the ability id to select. Route this to
+    /// [`AbilityDispatch::select`] on the lead's held dispatch.
+    SelectAbility,
+    /// `activate`; `concept` is `None`. Route this to [`activate_for_hook`].
+    ActivateAbility,
 }
 
 /// Result of a handled diagnostic command.
@@ -290,7 +402,8 @@ pub enum MutationKind {
 /// * `Reply(text)` — pure read-only output; send `text` to the command source.
 /// * `Mutate { kind, concept }` — perform the named state mutation in the host
 ///   layer, then send your own confirmation/denial. `concept` is the domain for
-///   `GrantAll` and the concept id for the other three kinds.
+///   `GrantAll`, the concept id for `Shed`/`Ungrant`/`Analyze`, the ability id
+///   for `SelectAbility`, and `None` for `ActivateAbility`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticOutcome {
     Reply(String),
@@ -301,8 +414,13 @@ pub enum DiagnosticOutcome {
 }
 
 /// Subcommands recognised by [`handle_diagnostic`].
-pub const SUPPORTED_SUBCOMMANDS: [&str; 9] = [
+///
+/// The first nine are the original diagnostic surface (kept unchanged); the last
+/// two are the optional command-only activation path documented in
+/// [`activation_key_help`].
+pub const SUPPORTED_SUBCOMMANDS: [&str; 11] = [
     "list", "info", "grantall", "shed", "ungrant", "analyze", "wheel", "flight", "registry",
+    "ability", "activate",
 ];
 
 /// Parses a raw command line and returns the diagnostic outcome, or `None` when
@@ -310,8 +428,9 @@ pub const SUPPORTED_SUBCOMMANDS: [&str; 9] = [
 ///
 /// Accepts an optional leading `/adaptionwheel` or `/aw` alias, quoted concept
 /// arguments, and extra whitespace. Read-only subcommands are `list`, `info`,
-/// `wheel`, `flight`, `registry`; `grantall`, `shed`, `ungrant`, `analyze`
-/// delegate to the host via `Mutate`.
+/// `wheel`, `flight`, `registry`; `grantall`, `shed`, `ungrant`, `analyze`,
+/// `ability` and `activate` delegate to the host via `Mutate`. The last two are
+/// the command-only activation path — see [`activation_key_help`].
 pub fn handle_diagnostic(command_line: &str, ctx: &DiagnosticCtx) -> Option<DiagnosticOutcome> {
     let tokens = tokenize(command_line);
     let sub = match tokens.first().map(String::as_str) {
@@ -333,6 +452,11 @@ pub fn handle_diagnostic(command_line: &str, ctx: &DiagnosticCtx) -> Option<Diag
         "shed" => required_mutation(MutationKind::Shed, args, "shed <concept>"),
         "ungrant" => required_mutation(MutationKind::Ungrant, args, "ungrant <concept>"),
         "analyze" => required_mutation(MutationKind::Analyze, args, "analyze <concept>"),
+        "ability" => required_mutation(MutationKind::SelectAbility, args, "ability <id>"),
+        "activate" => Mutate {
+            kind: MutationKind::ActivateAbility,
+            concept: None,
+        },
         _ => return None,
     };
     Some(outcome)
@@ -415,10 +539,7 @@ fn domain_of(concept: &str) -> &'static str {
 fn is_leveled(concept: &str) -> bool {
     let c = concept.to_ascii_lowercase();
     c.starts_with("type_")
-        || matches!(
-            c.as_str(),
-            "self_damage" | "mine_labor" | "combat_cooldown"
-        )
+        || matches!(c.as_str(), "self_damage" | "mine_labor" | "combat_cooldown")
         || c.starts_with("fist_")
         || c.starts_with("combat_fist")
 }
@@ -543,66 +664,331 @@ pub struct ConceptDef {
 /// `Offense_NPC_*` / `Drop_NPC_*` ids are minted at runtime and are not listed).
 pub const BUILTIN_CONCEPTS: &[ConceptDef] = &[
     // MOVEMENT
-    ConceptDef { concept: "Move_BerryBush", domain: "movement", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Move_BubbleColumn", domain: "movement", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Move_Honey", domain: "movement", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Move_PowderSnow", domain: "movement", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Move_SoulSand", domain: "movement", leveled: false, max_level: 1 },
+    ConceptDef {
+        concept: "Move_BerryBush",
+        domain: "movement",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Move_BubbleColumn",
+        domain: "movement",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Move_Honey",
+        domain: "movement",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Move_PowderSnow",
+        domain: "movement",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Move_SoulSand",
+        domain: "movement",
+        leveled: false,
+        max_level: 1,
+    },
     // PHYSICS
-    ConceptDef { concept: "Env_Cobweb", domain: "physics", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_FallDamage", domain: "physics", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Ice", domain: "physics", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Knockback", domain: "physics", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Slime", domain: "physics", leveled: false, max_level: 1 },
+    ConceptDef {
+        concept: "Env_Cobweb",
+        domain: "physics",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_FallDamage",
+        domain: "physics",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Ice",
+        domain: "physics",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Knockback",
+        domain: "physics",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Slime",
+        domain: "physics",
+        leveled: false,
+        max_level: 1,
+    },
     // MINING
-    ConceptDef { concept: "Fist_Diamond", domain: "mining", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Fist_Iron", domain: "mining", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Fist_Netherite", domain: "mining", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Fist_Stone", domain: "mining", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Fist_Wood", domain: "mining", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Mine_Labor", domain: "mining", leveled: true, max_level: 8 },
+    ConceptDef {
+        concept: "Fist_Diamond",
+        domain: "mining",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Fist_Iron",
+        domain: "mining",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Fist_Netherite",
+        domain: "mining",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Fist_Stone",
+        domain: "mining",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Fist_Wood",
+        domain: "mining",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Mine_Labor",
+        domain: "mining",
+        leveled: true,
+        max_level: 8,
+    },
     // ENVIRONMENT
-    ConceptDef { concept: "Env_Darkness", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Drowning", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Fire", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Inventory", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Lava", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Liquid", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Starve", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Suffocate", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Thorns", domain: "environment", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Env_Void", domain: "environment", leveled: false, max_level: 1 },
+    ConceptDef {
+        concept: "Env_Darkness",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Drowning",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Fire",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Inventory",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Lava",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Liquid",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Starve",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Suffocate",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Thorns",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Env_Void",
+        domain: "environment",
+        leveled: false,
+        max_level: 1,
+    },
     // COMBAT
-    ConceptDef { concept: "Combat_Cooldown", domain: "combat", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Combat_FistDiamond", domain: "combat", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Combat_FistIron", domain: "combat", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Combat_FistNetherite", domain: "combat", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Combat_FistStone", domain: "combat", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Combat_FistWood", domain: "combat", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Combat_ShieldLock", domain: "combat", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Combat_SkillIssue", domain: "combat", leveled: false, max_level: 1 },
+    ConceptDef {
+        concept: "Combat_Cooldown",
+        domain: "combat",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Combat_FistDiamond",
+        domain: "combat",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Combat_FistIron",
+        domain: "combat",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Combat_FistNetherite",
+        domain: "combat",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Combat_FistStone",
+        domain: "combat",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Combat_FistWood",
+        domain: "combat",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Combat_ShieldLock",
+        domain: "combat",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Combat_SkillIssue",
+        domain: "combat",
+        leveled: false,
+        max_level: 1,
+    },
     // PERCEPTION
-    ConceptDef { concept: "Percep_SteadyGaze", domain: "perception", leveled: false, max_level: 1 },
+    ConceptDef {
+        concept: "Percep_SteadyGaze",
+        domain: "perception",
+        leveled: false,
+        max_level: 1,
+    },
     // DAMAGE (type categories; FIRE and retired types excluded per Java)
-    ConceptDef { concept: "Type_EXPLOSION", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_FREEZE", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_LIGHTNING", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_MAGIC", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_MOB", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_OTHER", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_PLAYER", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_PROJECTILE", domain: "damage", leveled: true, max_level: 8 },
-    ConceptDef { concept: "Type_WITHER", domain: "damage", leveled: true, max_level: 8 },
+    ConceptDef {
+        concept: "Type_EXPLOSION",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_FREEZE",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_LIGHTNING",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_MAGIC",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_MOB",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_OTHER",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_PLAYER",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_PROJECTILE",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
+    ConceptDef {
+        concept: "Type_WITHER",
+        domain: "damage",
+        leveled: true,
+        max_level: 8,
+    },
     // SPECIAL
-    ConceptDef { concept: "ADBERSITY", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Dimension_Destroy", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Mutation_Aquatic", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Mutation_Flight", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Mutation_Fist", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Mutation_Impact", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Mutation_SeaEye", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Mutation_Thermal", domain: "special", leveled: false, max_level: 1 },
-    ConceptDef { concept: "Self_Damage", domain: "special", leveled: true, max_level: 8 },
+    ConceptDef {
+        concept: "ADBERSITY",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Dimension_Destroy",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Mutation_Aquatic",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Mutation_Flight",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Mutation_Fist",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Mutation_Impact",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Mutation_SeaEye",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Mutation_Thermal",
+        domain: "special",
+        leveled: false,
+        max_level: 1,
+    },
+    ConceptDef {
+        concept: "Self_Damage",
+        domain: "special",
+        leveled: true,
+        max_level: 8,
+    },
 ];
 
 fn registry_reply() -> String {
@@ -616,10 +1002,7 @@ fn registry_reply() -> String {
         } else {
             "one-time".to_string()
         };
-        lines.push(format!(
-            "  - {} [{}] {}",
-            def.concept, def.domain, shape
-        ));
+        lines.push(format!("  - {} [{}] {}", def.concept, def.domain, shape));
     }
     lines.join("\n")
 }
@@ -663,6 +1046,7 @@ fn push_unique(out: &mut Vec<String>, value: &str, cap: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn unlock_always(_: &dyn Fn(&str) -> bool) -> bool {
@@ -727,7 +1111,9 @@ mod tests {
     fn select_rejects_locked_id_without_syncing_or_persisting() {
         let mut d = two_abilities();
         let mut sync = Vec::new();
-        let err = d.select("flight", &active(&["Env_FallDamage"]), &mut |s| sync.push(s));
+        let err = d.select("flight", &active(&["Env_FallDamage"]), &mut |s| {
+            sync.push(s)
+        });
         assert_eq!(err.unwrap_err(), "ability 'flight' is locked");
         assert!(sync.is_empty());
         assert_eq!(d.selected(), None);
@@ -768,8 +1154,7 @@ mod tests {
         assert_eq!(ACTIVATIONS.load(Ordering::SeqCst), 0);
 
         assert_eq!(
-            d.activate(true, &is_active, &mut |s| sync.push(s))
-                .unwrap(),
+            d.activate(true, &is_active, &mut |s| sync.push(s)).unwrap(),
             "dive"
         );
         assert_eq!(ACTIVATIONS.load(Ordering::SeqCst), 1);
@@ -787,7 +1172,13 @@ mod tests {
     #[test]
     fn builtins_match_upstream_dive_gate() {
         let d = AbilityDispatch::with_builtins();
-        assert_eq!(d.ids(), BUILTIN_ABILITY_IDS.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            d.ids(),
+            BUILTIN_ABILITY_IDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
         let fall = active(&["Env_FallDamage"]);
         let flight = active(&["Mutation_Flight"]);
         let fist = active(&["Mutation_Fist"]);
@@ -824,10 +1215,8 @@ mod tests {
             wheel_worn: true,
         };
         // Keep a genuine leveled entry in the map for list/info output.
-        ctx.level_map
-            .insert("Type_EXPLOSION".to_string(), 2);
-        ctx.level_map
-            .insert("Self_Damage".to_string(), 8);
+        ctx.level_map.insert("Type_EXPLOSION".to_string(), 2);
+        ctx.level_map.insert("Self_Damage".to_string(), 8);
         ctx.adapt_count = 5;
         ctx
     }
@@ -904,7 +1293,9 @@ mod tests {
         );
         assert_eq!(
             handle_diagnostic("shed", &ctx),
-            Some(Reply("[adaptionwheel] usage: /adaptionwheel shed <concept>".to_string()))
+            Some(Reply(
+                "[adaptionwheel] usage: /adaptionwheel shed <concept>".to_string()
+            ))
         );
         assert_eq!(handle_diagnostic("somethingelse", &ctx), None);
         assert_eq!(handle_diagnostic("  ", &ctx), None);
@@ -959,5 +1350,122 @@ mod tests {
         assert_eq!(domain_of("Existence_Wither"), "existence");
         assert_eq!(domain_of("Mutation_Flight"), "special");
         assert_eq!(DOMAIN_KEYS.len(), 11);
+    }
+
+    #[test]
+    fn active_predicate_from_levels_union_view() {
+        let levels = BTreeMap::from([
+            ("Type_EXPLOSION".to_string(), 2u8),
+            ("Zero_Level".to_string(), 0u8),
+        ]);
+        let adapted = BTreeSet::from(["Env_FallDamage".to_string(), "Mutation_Flight".to_string()]);
+        let is_active = active_predicate_from_levels(&levels, &adapted);
+        assert!(ability_is_active(&is_active, "Env_FallDamage"));
+        assert!(ability_is_active(&is_active, "Mutation_Flight"));
+        assert!(ability_is_active(&is_active, "Type_EXPLOSION"));
+        assert!(!ability_is_active(&is_active, "Zero_Level"));
+        assert!(!ability_is_active(&is_active, "Unknown_Concept"));
+    }
+
+    #[test]
+    fn builtin_dispatch_selection_and_immediate_sync_message() {
+        let mut dispatch = builtin_dispatch();
+        assert_eq!(
+            dispatch.ids(),
+            BUILTIN_ABILITY_IDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        let levels = BTreeMap::new();
+        let adapted = BTreeSet::from(["Env_FallDamage".to_string()]);
+        let is_active = active_predicate_from_levels(&levels, &adapted);
+        let mut synced = Vec::new();
+        assert_eq!(
+            dispatch
+                .select(ABILITY_DIVE, &is_active, &mut |id| synced.push(id))
+                .unwrap(),
+            ABILITY_DIVE
+        );
+        assert_eq!(synced, vec![ABILITY_DIVE.to_string()]);
+        assert_eq!(
+            immediate_sync_message(&synced[0]),
+            "[adaptionwheel] ability synced: dive"
+        );
+        assert_eq!(
+            dispatch.resolve_selected(&is_active).as_deref(),
+            Some(ABILITY_DIVE)
+        );
+    }
+
+    #[test]
+    fn activate_for_hook_matches_activate_semantics() {
+        let mut dispatch = builtin_dispatch();
+        let levels = BTreeMap::new();
+        let adapted = BTreeSet::from(["Mutation_Flight".to_string()]);
+        let is_active = active_predicate_from_levels(&levels, &adapted);
+        let mut synced = Vec::new();
+
+        assert_eq!(
+            activate_for_hook(&mut dispatch, false, &is_active, &mut |id| synced.push(id))
+                .unwrap_err(),
+            "wheel not worn"
+        );
+        assert!(synced.is_empty());
+
+        assert_eq!(
+            activate_for_hook(&mut dispatch, true, &is_active, &mut |id| synced.push(id)).unwrap(),
+            ABILITY_DIVE
+        );
+        assert_eq!(synced, vec![ABILITY_DIVE.to_string()]);
+
+        let empty_levels = BTreeMap::new();
+        let empty_adapted = BTreeSet::new();
+        let none_active = active_predicate_from_levels(&empty_levels, &empty_adapted);
+        assert!(activate_for_hook(&mut dispatch, true, &none_active, &mut |_| {}).is_err());
+    }
+
+    #[test]
+    fn activation_key_help_documents_command_only_limitation() {
+        let help = activation_key_help();
+        let lower = help.to_ascii_lowercase();
+        assert!(help.contains("8bc19c5f97"));
+        assert!(lower.contains("no universal activation key"));
+        assert!(help.contains("ONLY"));
+        assert!(help.contains("/adaptionwheel wheel"));
+        assert!(help.contains("ability <id>"));
+        assert!(lower.contains("no key hook"));
+    }
+
+    #[test]
+    fn diagnostic_ability_and_activate_subcommands() {
+        let ctx = sample_ctx();
+        assert_eq!(
+            handle_diagnostic("ability dive", &ctx),
+            Some(Mutate {
+                kind: MutationKind::SelectAbility,
+                concept: Some("dive".to_string())
+            })
+        );
+        assert_eq!(
+            handle_diagnostic("/aw activate", &ctx),
+            Some(Mutate {
+                kind: MutationKind::ActivateAbility,
+                concept: None
+            })
+        );
+        assert_eq!(
+            handle_diagnostic("ability", &ctx),
+            Some(Reply(
+                "[adaptionwheel] usage: /adaptionwheel ability <id>".to_string()
+            ))
+        );
+        // The original nine are preserved; the two activation ones are additive.
+        assert_eq!(SUPPORTED_SUBCOMMANDS.len(), 11);
+        for sub in [
+            "list", "info", "grantall", "shed", "ungrant", "analyze", "wheel", "flight", "registry",
+        ] {
+            assert!(SUPPORTED_SUBCOMMANDS.contains(&sub));
+        }
     }
 }
