@@ -1,0 +1,14 @@
+{
+  "title": "itemGroup.adaptionwheel.main",
+  "icon": "adaptionwheel:adaptation_wheel",
+  "items": [
+    "adaptionwheel:adaptation_wheel",
+    "adaptionwheel:mahoraga_wheel",
+    "adaptionwheel:mahoraga_wheel_wood",
+    "adaptionwheel:sword_of_extermination",
+    "adaptionwheel:all_adaption",
+    "adaptionwheel:adaptation_brazier",
+    "adaptionwheel:resonance_altar",
+    "adaptionwheel:wheel_totem"
+  ]
+}
