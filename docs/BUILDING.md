@@ -1,37 +1,30 @@
-# Building / Validation (PR-2 MVP slice)
+# Building / Validation
 
-## Baseline
-- Horizon target (validation baseline): `139e83fff8` (`../Horizon`, 2026-11-08)
-- Native mod pinned in: `native/adaptation/horizon-mixin.toml` (`[compatibility].horizon_revision`)
-- Native crate dep pinned in: `native/adaptation/api/Cargo.toml` (`horizon-client` git `rev = "139e83fff8"`)
+## Baselines
+- **Merged MVP baseline (main/PR #3):** Horizon `139e83fff8` — `cargo test` in `native/adaptation/api` passed (5/5) for core logic.
+- **Current dev target (inventory activation update):** Horizon `f4d8d62c31` (`origin/main`, MC 26.3-era APIs) to support inventory hooks (e.g. `player_inventory_changed`, 41-slot inventory snapshots) so the wheel can activate when present anywhere in player inventory.
 
 ## Repository layout
-- `content/adaptation/` — Horizon content mod scaffold (`.hmod` source: `horizon-mod.toml`, `assets/`, `data/`)
+- `content/adaptation/` — Horizon content mod scaffold (`.hmod` source)
 - `native/adaptation/` — native trait mod scaffold (`horizon-mixin.toml`, `api/` crate)
 - `docs/` — architecture, parity, MVP scope/design/scenarios, Horizon notes, issues
 
-## Prerequisites (expected)
-- Rust toolchain (edition 2024 compatible; repo environment: `cargo 1.99.1`, `rustc 1.99.1`)
-- Access to Horizon source/build tooling matching pinned revision for native builds
-- `cargo-horizon-mod` / Horizon launcher for packaging/running `.hmod` and native bundle builds in an instance
+## Prerequisites
+- Rust toolchain (edition 2024 compatible)
+- Horizon source/build tooling for the pinned revision
+- `cargo-horizon-mod` / Horizon launcher for `.hmod` packaging and native builds in an instance
 
-## Content mod (`.hmod`) checks
-From `content/adaptation/` (when `cargo-horizon-mod` is available):
-- `cargo horizon-mod build` → produces `target/horizon-mod/adaptionwheel.hmod`
+## Content mod (`.hmod`)
+From `content/adaptation/` (if `cargo-horizon-mod` available):
+- `cargo horizon-mod build`
 - `cargo horizon-mod check target/horizon-mod/adaptionwheel.hmod --json`
 
-Manual structure currently includes:
-- `content/adaptation/horizon-mod.toml`
-- placeholder wheel item declaration/model/assets (`adaptionwheel:adaptation_wheel`)
-
-## Native mod scaffold checks
+## Native mod
 From `native/adaptation/api/`:
-- `cargo check` — validates crate structure/deps/API alignment against pinned `horizon-client` (may require fetching Horizon git dependency and compatible environment)
-- `cargo test` — runs pure logic unit tests in `src/lib.rs` (state/progress/mitigation helpers)
+- `cargo check` / `cargo test` against pinned `horizon-client` revision
+- Full runtime: `horizon-launcher native-build native/adaptation --instance <instance> --trust-native-code`
 
-> Note: Full runtime validation requires Horizon launcher/native-build flow with a compatible instance and trusted native code build:
-> `horizon-launcher native-build native/adaptation --instance <instance> --trust-native-code`
-
-## Current PR-2 evidence status
-- Implemented: pinned manifests, MVP native state/logic scaffold (`player_logged_in`, `player_clone`, `living_fall`, `living_incoming_damage`, `net_from_client` hook wiring intent), content wheel item placeholder, unit-testable core logic.
-- Pending runtime confirmation: attachment persistence behavior on target build, exact Host/player handle mapping in hooks, inventory-based wheel activation, mod message roundtrip, in-game mitigation/progress verification.
+## Inventory activation (26.3-era Horizon APIs)
+- Server-side activation should consider wheel presence in **any player inventory slot** (hotbar/main inventory/offhand/armor slots as applicable), not only held/offhand.
+- Preferred hook: `player_inventory_changed` (API 579, 41 slots) to recompute activation on inventory updates; fallback/recompute on login/respawn/tick as needed.
+- Implementation must remain server-authoritative and sync activation/state changes to clients when networking is wired.
