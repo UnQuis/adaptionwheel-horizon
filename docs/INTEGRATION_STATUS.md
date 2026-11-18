@@ -1,6 +1,6 @@
 # Integration & Verification Status (Agent #4)
 
-Last updated: 2026-11-14 (gate aggregation, PR #12 combined native added)  
+Last updated: 2026-11-18 (runtime command-system evidence added by Agent #4; API Horizon changed significantly — see note)  
 Branch/worktree (main): `feat/creative-tab-adaptation-logic` @ `fc581fff` (`origin/feat/creative-tab-adaptation-logic`, PR #5 head)  
 Port repo: <https://github.com/UnQuis/adaptionwheel-horizon>  
 Upstream Horizon: <https://github.com/horizon-rust/horizon> (native target pin in repo/PRs: `f4d8d62c31`; local reference checkout noted in docs)  
@@ -43,10 +43,12 @@ Environment (Agent #4 local): Linux, `git`, `cargo 1.99.1` / `rustc 1.99.1` (or 
 | Content build/check | `cargo-horizon-mod build` + `check --json` | **reported PASS** | PR #7: ok:true, sha256 `5c86ca5fe759f4706aacae4a22bab9b2e628e4b492aca84b19cccf8e94a2dc11`, size 975453 (PR #7 comment #6874867629). Not reproduced by Agent #4. |
 | Native build/dry-run | horizon-launcher/native-build | **not run** | Tooling/instance unavailable. |
 | Runtime/in-game/CI | Horizon launcher/instance/GUI, scenarios, CI | **not run** | Unavailable in this environment (see blockers). |
+| **Runtime — command system (Agent #4, 2026-11-18)** | `horizon-ctl` driving native build `native-9f42064-67f92751b91f`, instance `adaptionwheel-test` (`HORIZON_HOME=/home/alexquasar/.local/share/horizon/instances/adaptionwheel-test`), world `New World` creative, content hmod sha256 `5c86ca5…`; `command adaptionwheel <help\|status\|activate\|grant\|set\|reset>` | **PASS (all six respond)** | See `docs/COMMAND_SYSTEM_SPEC.md` §6 and logs `/mnt/Barracuda/tmp/opencode/cmd-validate-native.out`. Commands register and answer with expected `[adaptionwheel]` replies. Login chat `[adaptionwheel] ready…` and summary observed. Named native build is **not** PR #12 head rebuild — it is a current native build; PR #12 head equivalence is by code inspection. |
+| **Runtime — attachment persistence (Agent #4, 2026-11-18)** | `grant env_lava 3` → `quit` → relaunch (correct `HORIZON_HOME`) → `status` | **CONFIRMED** | Status after relaunch `env_lava: lvl=3/3 done=true`, login chat `lava lvl=3` (`/mnt/Barracuda/tmp/opencode/persist-test.out`). Earlier "known gap" from orchestrator was a **false alarm** (missing `HORIZON_HOME` → default instance where adaptionwheel isn't enabled); retracted. No native fix warranted on that basis. |
 
 ## Blockers / risks (merge gate)
 
-1. **Runtime evidence missing (critical):** No Horizon launcher/client/instance/GUI and no CI artifacts to verify mod load, content presentation (creative tab/items/blocks/assets/lang/sounds/loot/recipes/tags), wheel activation (41-slot inventory), `/adaptionwheel` behavior (player + console runtime), adaptation scenarios (fall/explosion/fire/lava/drown/contact/general), and login/relog/clone/respawn/persistence semantics on integrated heads.
+1. **Runtime evidence — partially closed (2026-11-18):** `horizon-ctl` runtime now available (headless native build `native-9f42064-67f92751b91f`, instance `adaptionwheel-test`). **Verified:** mod load/content present, wheel activation from hotbar, `/adaptionwheel` player-context commands (help/status/activate/set/grant/reset) and attachment persistence across quit→relaunch. **Still missing:** dedicated-console command behavior at runtime, adaptation damage/scenario behavior end-to-end (fall/explosion/fire/lava/drown/contact/general), relog/clone/respawn persistence beyond quit→relaunch, content presentation details (creative tab/models/textures/sounds/fonts/recipes/loot/tags), reproduction on the exact PR #12 head build, and CI. See `docs/COMMAND_SYSTEM_SPEC.md` §6–§7 and §8 for command-system-specific gaps.
 2. **Build/tooling gaps:** `cargo-horizon-mod` unavailable in PATH; native packaged build/install/load not reproduced by Agent #4. PR #7 content build/check remains reported-only here.
 3. **CI absent:** No status checks/workflows on open PRs; cannot rely on automated green signal.
 4. **Stack composition/order:** PR #12 resolves `#8/#11` native conflict for base `#5`, but final merge order must account for `#4/#5/#7/#9/#12` (+ `#6` docs) and any rebases onto updated bases. Reported evidence is per-PR/head and not all independently reproduced by Agent #4 on a single final composed head.
@@ -55,7 +57,8 @@ Environment (Agent #4 local): Linux, `git`, `cargo 1.99.1` / `rustc 1.99.1` (or 
 ## Horizon API gaps / issues (tracked)
 
 - Conditional/runtime-gap drafts prepared in `docs/issues/` and `docs/AGENT1_API_GAP_AND_READINESS.md` (e.g. accessory/wheel slot, input/keybind actions, persistence ergonomics, mod-messages/native sync). File/track in relevant Horizon mod/API repo **only when confirmed by runtime/integration evidence** with repro, expected/actual behavior, and criteria.
-- Console command handler (API 99) implemented in `#11/#12` scope; runtime console behavior remains unverified.
+- Console command handler (API 99) implemented in `#11/#12` scope; runtime dedicated-console behavior remains unverified (player-context `/adaptionwheel` commands verified in-game, see `docs/COMMAND_SYSTEM_SPEC.md`).
+- **Env note (2026-11-18, user/orchestrator):** Horizon API changed significantly; runtime validation must use the correct target build/instance (`HORIZON_HOME` set to `adaptionwheel-test`). Commands are absent and state resets when launched into the default `~/.local/share/horizon` instance.
 
 ## Merge-readiness recommendation (Agent #4 gate)
 
@@ -66,3 +69,4 @@ Environment (Agent #4 local): Linux, `git`, `cargo 1.99.1` / `rustc 1.99.1` (or 
 ## Change log (this doc)
 
 - 2026-11-14: Added PR #12 (`2f91bdc`, base `#5@fc581fff`) as combined native integration (`#8+#11`), recorded Agent #4 independently reproduced `cargo check -q` PASS and `cargo test -q` 10/10 PASS on combined head, updated stack/merge-order notes, blockers, and evidence table. Environment note: prefer `/mnt/Barracuda/tmp` for temp/target dirs.
+- 2026-11-18: Added runtime command-system evidence (Agent #4): all six `/adaptionwheel` player-context commands respond via `horizon-ctl` on native build `native-9f42064-67f92751b91f` instance `adaptionwheel-test`; attachment persistence confirmed across quit→relaunch (earlier "gap" retracted as false alarm — missing `HORIZON_HOME`). Created `docs/COMMAND_SYSTEM_SPEC.md` (behavior matrix, console behavior, persistence contract, evidence, gaps). Noted significant Horizon API change; command-system blocker partially closed, full-stack merge-readiness still gated on remaining runtime/CI evidence.
