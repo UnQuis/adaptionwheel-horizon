@@ -56,6 +56,6 @@ Proposed merge order (issue #10): **#4 → #5 → #7 → #12 (preferred over #8/
 
 ## Risks / open items
 
-- Upstream Horizon `main` mod API restructuring (generated API, `horizon_mod`/`Registrar`, attachments runtime) is a separate migration track — see `docs/HORIZON_NATIVE_FORMAT_GUIDE.md`.
+- Upstream Horizon `main` mod API restructuring (generated API, `horizon_mod`/`Registrar`, attachments runtime) is a separate migration track — **blocked** by [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184) (no signed SDK for fresh builds); see `docs/HORIZON_NATIVE_FORMAT_GUIDE.md`. Continue on the pinned `f4d8d62c31` path until resolved.
 - No CI/status checks on PRs; heads/SHAs drift; final hmod artifact (`5c86ca5f…` vs later `3cee70ad…`) must be reconciled.
 - Do not claim unsupported content/data parity (`docs/CONTENT_DATA_PARITY.md`).

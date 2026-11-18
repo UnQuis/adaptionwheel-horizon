@@ -29,5 +29,5 @@ Heads at audit: #4 `cf987c0`→`main`; #5 `fc581fff`→#4 (older snapshots `70f8
 
 - Partial runtime exists (issue #10, PR #12 build), but the full scenario/mitigation/console/sync/content-runtime matrix and CI are still needed for the 100% gate.
 - Heads/SHAs evolve; #8/#11 vs #12 disposition and the final hmod artifact require final-head evidence.
-- No confirmed Horizon API blocker (see `docs/API_GAP_BLOCKER_CHECK.md`); all drafts remain conditional. Canonical tracker: `horizon-rust/horizon/issues` — confirm channel with maintainers before filing.
+- **Confirmed/filed** Horizon API blocker: [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184) (signed SDK unavailable for fresh builds; blocks migration to upstream main native format). Adaptation-logic gap drafts remain conditional (see `docs/API_GAP_BLOCKER_CHECK.md`); file only with individual reproducible evidence.
 - Upstream Horizon `main` mod API restructuring is a future migration caveat (see `docs/HORIZON_NATIVE_FORMAT_GUIDE.md`).

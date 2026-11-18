@@ -169,7 +169,7 @@ Registered as OP level 2: `/adaptionwheel status|activate|reset|help`, `/adaptio
 ### P0 — blocks 100% merge-readiness (partial runtime now exists)
 1. **Complete the runtime matrix on the final installed stack** (PR #12 native `2f91bdc`/`native-9f42064-67f92751b91f` + final content hmod): already confirmed — six commands, inventory activation, relaunch persistence, lava progression, death/clone level preservation. Still required — mitigation checks outside creative mode for fall/explosion/fire/drown/contact/general, console behavior beyond help, mod-net sync/UI feedback, content rendering/format checks on the final hmod, and reproducible commands/logs/SHAs per case.
 2. **Attachment semantics closure** (save/flush timing, `copy_on_death`, player payload limits, schema v1 migration): relaunch and clone/death are now evidenced (issue #10), but survival-mode/cross-dimension/server-restart behavior and limits remain unverified; keep the in-memory fallback explicitly documented until closed.
-3. **Integration revalidation of the composed stack on final heads** (proposed order #4→#5→#7→**#12 instead of #8/#11**→#9→#6→docs #13/#14), clean rebuild + combined `cargo check/test` + content build/check + runtime re-run, plus **CI checks** (currently none). No confirmed Horizon API blocker exists (see `API_GAP_BLOCKER_CHECK.md`) — do **not** file upstream issues until a reproducible blocker is captured with target/rev evidence and the channel is confirmed (`horizon-rust/horizon/issues`).
+3. **Integration revalidation of the composed stack on final heads** (proposed order #4→#5→#7→**#12 instead of #8/#11**→#9→#6→docs #13/#14), clean rebuild + combined `cargo check/test` + content build/check + runtime re-run, plus **CI checks** (currently none). A **confirmed, filed** Horizon API blocker now exists — [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184): no signed SDK for fresh builds, which blocks migration to upstream main's native format (see `docs/HORIZON_NATIVE_FORMAT_GUIDE.md`). The old pinned-format build path remains valid; remaining adaptation-logic gaps still require individual evidence before filing.
 
 ### P1 — next implementation iteration (parity of core mechanics)
 1. **Concept model generalization**: replace 7 hard-coded constants with a registry carrying domain, leveled/one-time, max level and display id; use upstream ids from `Concepts`/`AdaptationRegistry` as the contract (at minimum add the 15 damage categories + 10 environment + 5 movement + 5 physics ids).
@@ -197,6 +197,6 @@ Registered as OP level 2: `/adaptionwheel status|activate|reset|help`, `/adaptio
 ## 8) Companion docs (Ensemble docs/readiness integration)
 
 - `docs/READINESS_EVIDENCE_REGISTER.md` — per-PR confirmed vs claimed evidence and remaining gates (S2).
-- `docs/API_GAP_BLOCKER_CHECK.md` — no confirmed Horizon API blocker; candidate gaps and evidence needed (S3).
+- `docs/API_GAP_BLOCKER_CHECK.md` — confirmed/filed SDK blocker (horizon-rust/horizon#18184); other candidate gaps remain hypotheses (S3 + orchestrator update).
 - `docs/MIGRATION_WORK_PLAN.md` — prioritized P0/P1/P2 work plan with owners/evidence gates (S5).
 - `docs/HORIZON_NATIVE_FORMAT_GUIDE.md` — Horizon native packaging/format guide (S4).
