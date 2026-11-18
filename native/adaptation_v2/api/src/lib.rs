@@ -9,9 +9,14 @@ use mod_api::{
     Registrar, RegistrationContext, RunModCommandEvent, ServerHost,
 };
 
+mod abilities;
 mod commands_impl;
+mod concepts_registry;
+mod damage_categories;
 mod engine_impl;
 mod hooks_impl;
+mod state_v2;
+mod task_system;
 mod state_impl;
 
 #[derive(Default)]
