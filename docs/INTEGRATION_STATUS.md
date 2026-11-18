@@ -29,7 +29,7 @@ All listed PRs OPEN/MERGEABLE at audit time, **no CI/status checks** (gh `status
 
 ## Reproduced / reported verification
 
-Environment (Agent #4 local): Linux, `git`, `cargo 1.99.1` / `rustc 1.99.1` (or 1.94.1 where noted earlier), `gh`. `cargo-horizon-mod` not installed in PATH; no Horizon launcher/instance/runtime/GUI available; no CI workflows/checks. Temp workspace constraint observed earlier (`/tmp` full) — use `/mnt/Barracuda/tmp` for `TMPDIR/TEMP/TMP` and cargo target dirs.
+Environment (Agent #4 local): Linux, `git`, `cargo 1.99.1` / `rustc 1.99.1` (verified by orchestrator 2026-11-18: `rustc 1.99.1 (58cf8f9c3 2026-10-13)`; earlier 1.94.1 mention was stale), `gh`. `cargo-horizon-mod` not installed in PATH (CI workflow now builds it from pinned `HORIZON_REV`); Horizon runtime available via `horizon-ctl` on instance `adaptionwheel-test` (headless). Temp workspace constraint observed earlier (`/tmp` full) — use `/mnt/Barracuda/tmp` for `TMPDIR/TEMP/TMP` and cargo target dirs locally; CI uses `$RUNNER_TEMP`. CI workflow `.github/workflows/horizon-qa.yml` added in this PR (native check/test + content build/check, HORIZON_REV variable default `f4d8d62c31`, toolchain 1.99.1, 7-day artifacts).
 
 | Check | Command / scope | Result | Evidence / notes |
 |---|---|---|---|

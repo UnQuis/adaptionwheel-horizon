@@ -1,0 +1,104 @@
+# horizon-qa — native + content verification for the AdaptionWheel Horizon port.
+# Decisions (orchestrator, 2026-11-18):
+#   - HORIZON_REV: repository variable with default f4d8d62c31 (current repo pin).
+#     Update the variable default after migration completes. Never unpinned latest.
+#   - Toolchain: explicit 1.99.1 (dtolnay/rust-toolchain), not 1.94.1.
+#   - Path/triggers: .github/workflows/horizon-qa.yml; all PRs + push main.
+#   - Retention 7 days; Rust cache keyed on head SHA (no stacked-PR special-casing).
+#   - gametests use timeouts; temp/logs use $RUNNER_TEMP in CI (NOT /mnt/Barracuda/tmp — that is local-only).
+# NOT covered: runtime / in-game / horizon-ctl evidence — see docs/RUNTIME_VALIDATION_PLAN.md.
+name: horizon-qa
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  HORIZON_TOOL_REPO: "https://github.com/horizon-rust/horizon"
+  # Repo variable with a reproducible default. Override in repository settings
+  # with the post-migration Horizon revision when the orchestrator supplies it.
+  HORIZON_REV: ${{ vars.HORIZON_REV || 'f4d8d62c31' }}
+  RUST_TOOLCHAIN: "1.99.1"
+
+jobs:
+  native:
+    name: native — cargo check + cargo test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/adaptation/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      # Cache keyed on head SHA (per orchestrator: no stacked-PR special-casing).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "native/adaptation/api -> target"
+          key: ${{ github.sha }}
+
+      - name: cargo check
+        run: cargo check --locked
+
+      - name: cargo test
+        run: cargo test --locked
+
+  content:
+    name: content — cargo-horizon-mod build + check --json
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: content/adaptation
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt
+
+      # CI temp/logs use $RUNNER_TEMP (local /mnt/Barracuda/tmp is not available here).
+      - name: Prepare temp dir
+        run: |
+          mkdir -p "$RUNNER_TEMP/horizon-qa"
+          echo "TMPDIR=$RUNNER_TEMP/horizon-qa" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP/horizon-qa" >> "$GITHUB_ENV"
+          echo "TMP=$RUNNER_TEMP/horizon-qa" >> "$GITHUB_ENV"
+
+      # cargo-horizon-mod is a Horizon workspace crate; build from the pinned
+      # revision (HORIZON_REV) so content validation is reproducible.
+      - name: Cache cargo-horizon-mod binary
+        id: tool-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-horizon-mod
+          key: cargo-horizon-mod-${{ runner.os }}-${{ env.HORIZON_REV }}-${{ github.sha }}
+
+      - name: Install cargo-horizon-mod from pinned Horizon ref
+        if: steps.tool-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git "$HORIZON_TOOL_REPO" --rev "$HORIZON_REV" \
+            cargo-horizon-mod --locked --force
+
+      - name: Build content mod (bounded)
+        run: |
+          timeout 900 cargo horizon-mod build 2>&1 | tail -n 200
+
+      - name: Check content mod (JSON)
+        run: |
+          timeout 300 cargo horizon-mod check target/horizon-mod/adaptionwheel.hmod --json | tee check.json
+          jq -e '.ok == true' check.json
+
+      - name: Upload .hmod artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptionwheel-hmod-${{ github.sha }}
+          path: content/adaptation/target/horizon-mod/adaptionwheel.hmod
+          if-no-files-found: error
+          retention-days: 7
