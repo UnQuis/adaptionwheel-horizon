@@ -379,5 +379,6 @@
   "item.adaptionwheel.adaptation_wheel": "Колесо Адаптации",
   "item.adaptionwheel.adaptation_brazier": "Жаровня Адаптации",
   "item.adaptionwheel.resonance_altar": "Алтарь Резонанса",
-  "item.adaptionwheel.wheel_totem": "Тотем Колеса"
+  "item.adaptionwheel.wheel_totem": "Тотем Колеса",
+  "mod.adaptionwheel.name": "AdaptionWheel"
 }
