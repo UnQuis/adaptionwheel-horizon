@@ -85,3 +85,25 @@
   - Added per-player in-memory activation/state update on inventory changes and login messages reflecting source.
   - Kept MVP fall/explosion core logic; damage-to-player state wiring remains prototype-dependent pending player identity/context mapping in damage hooks for the target build.
 - **Evidence:** code updated in `native/adaptation/api/src/lib.rs`; build/test against `f4d8d62c31` attempted/recorded in branch workflow (see commit/PR notes).
+
+## Content/assets integration (Agent #2, 2026-11-14)
+
+### Verified (content packaging / schema)
+- `cargo horizon-mod build` + `cargo horizon-mod check --json` pass for `content/adaptation` after schema fixes (`adaptionwheel.hmod`, api 0.2, capabilities `[registries]`, side both). Reproducible with Horizon tools from `../Horizon`:
+  - `cd content/adaptation && cargo run -p cargo-horizon-mod --manifest-path /home/alexquasar/Проекты/MCModsFin/Horizon/Cargo.toml -- build`
+  - `... -- check target/horizon-mod/adaptionwheel.hmod --json`
+- Horizon content path validation rejects unsupported/non-plain paths in `assets/` or `data/` (e.g. `.blend` source files): `assets/adaptionwheel/models/entity/DharmaChakra*.blend` caused build failure ("not a plain assets/ or data/ path"). **Workaround:** keep source assets outside packaged `assets/` (e.g. `docs/reference/...`) and ship only runtime-ready formats.
+- `data/adaptionwheel/horizon/item/*.json` must follow Horizon item schema (no `item` field); block items should be declared via `data/.../horizon/block/*.json` (block `item` behavior) rather than duplicate item registrations with invalid fields.
+- Current content registrations/assets aligned for declared set: 5 standalone items + 3 blocks + 1 creative tab (`main.json`), matching `assets/.../items/*.json`, `models/item`, `blockstates`, block models, textures, sounds refs, and lang keys (en/ru base names synchronized).
+
+### Packaged but runtime-unverified formats/assets
+- **Entity models (`.obj`)**: `assets/adaptionwheel/models/entity/{dharma_chakra,soe}.obj` are packaged and pass check, but runtime loading/rendering support in Horizon content pipeline is **not verified** in a Horizon instance.
+- **Shaders**: `assets/adaptionwheel/shaders/core/*.json|.fsh|.vsh` and `shaders/core/post/*` are packaged; Horizon has a separate shader mod mechanism (`.hshader` / shader APIs in native context per docs), so NeoForge-style core/post shader assets inside `.hmod` content may not be applied at runtime — **needs runtime verification**.
+- **Fonts**: TTF fonts and font JSON definitions under `assets/adaptionwheel/font/` are packaged; runtime font registration/rendering behavior in Horizon content mods is **unverified**.
+- **Client item definitions**: `assets/adaptionwheel/items/*.json` (model refs) are packaged; treated as Horizon/vanilla-compatible client item definitions, but **runtime behavior must be verified** for target Horizon build.
+- **Custom UI/radial wheel, advanced VFX/entity rendering parity**: content-only assets are insufficient; requires native hooks/UI/render/input APIs and protocol design (tracked separately in MVP scope/Horizon notes/issue drafts).
+
+### Content-side gaps / follow-ups
+- Perform runtime verification in target Horizon launcher/instance for tab visibility, item/block rendering, models (including OBJ), sounds, fonts, and shader-related visuals.
+- If OBJ/core shaders/fonts are unsupported in content mods for target Horizon, prepare scoped API/format support requests or porting alternatives (with evidence from runtime tests).
+- Keep scoped PRs for content schema/build fixes separate from unrelated docs/issue edits; include only files required for Horizon content correctness.
