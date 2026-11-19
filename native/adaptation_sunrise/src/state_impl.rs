@@ -396,7 +396,12 @@ pub fn player_uuid_for_entity(entity: u32) -> Option<u128> {
 /// runtime's `AttachmentRegistration` (`attachments.rs:708-723`) is an internal
 /// handle for indexed attachment maps, not a mod-facing registration step.
 /// Kept so `lib.rs::Hooks::register` can call it uniformly with other subsystems.
-pub fn register_attachments(_r: &mut dyn Registrar, _cx: &RegistrationContext) {}
+pub fn register_attachments(r: &mut dyn Registrar, _cx: &RegistrationContext) {
+    // Sunrise refuses undeclared attachment ids (AttachmentError::Undeclared);
+    // Horizon accepted an implicit declaration, which is why the no-op worked
+    // there but silently dropped every save here.
+    let _ = r.register_attachment_type("adaptionwheel:player_state", false);
+}
 
 // No in-process `ServerHost` mock is needed: the persistence path is exercised
 // directly through the codec functions (`encode_player_state_nbt` /
