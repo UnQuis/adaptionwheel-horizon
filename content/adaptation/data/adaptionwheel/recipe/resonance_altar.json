@@ -6,12 +6,8 @@
     " I "
   ],
   "key": {
-    "I": {
-      "item": "minecraft:gold_ingot"
-    },
-    "A": {
-      "item": "minecraft:amethyst_block"
-    }
+    "I": "minecraft:gold_ingot",
+    "A": "minecraft:amethyst_block"
   },
   "result": {
     "id": "adaptionwheel:resonance_altar",
