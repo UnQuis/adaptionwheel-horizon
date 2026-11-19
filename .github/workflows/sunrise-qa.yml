@@ -1,0 +1,127 @@
+# sunrise-qa — native (81/81) + content .smod build/check for the PRIMARY Sunrise target.
+# Horizon (horizon-qa.yml) is archive. Decisions (orchestrator, 2026-11-19):
+#   - SUNRISE_REV pin = ed3ac19558d8dc1092c431312848cbb58fb01e41 (signed SDK).
+#   - SDK source fetched from sunrise-org/sunrise release asset api-source.tar.xz into .sunrise/sdk/api.
+#   - Toolchain 1.99.1 (sdk.json toolchain.rust = 1.99.1).
+#   - native: cargo check + cargo test (81/81) in native/adaptation_sunrise, CARGO_TARGET_DIR under $RUNNER_TEMP.
+#   - content: cargo-sunrise-mod build + check --json (jq .ok == true) for id adaptionwheel_content.
+#   - native-build is NOT run here (no signed launcher env in CI).
+#   - cache keyed on head SHA; artifact retention 7 days; timeouts on build/test.
+# NOT covered: in-game / sunrise-ctl evidence (see docs/SUNRISE_RUNTIME_PLAN.md), native-load validation.
+name: sunrise-qa
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  SUNRISE_REPO: "sunrise-org/sunrise"
+  # Repo-variable override with a reproducible signed-SDK default. Never unpinned latest.
+  SUNRISE_REV: ${{ vars.SUNRISE_REV || 'ed3ac19558d8dc1092c431312848cbb58fb01e41' }}
+  RUST_TOOLCHAIN: "1.99.1"
+  SDK_API_DIR: .sunrise/sdk/api
+
+jobs:
+  native:
+    name: native — cargo check + cargo test (81/81, signed SDK)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/adaptation_sunrise
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Set CI temp/target dirs
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cargo-target-sunrise-native" >> "$GITHUB_ENV"
+          echo "TMPDIR=$RUNNER_TEMP/sunrise-tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP/sunrise-tmp" >> "$GITHUB_ENV"
+          echo "TMP=$RUNNER_TEMP/sunrise-tmp" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sunrise-tmp"
+
+      # Fetch the signed SDK source archive into .sunrise/sdk/api (path mod_api depends on).
+      - name: Fetch Sunrise SDK source (api-source.tar.xz)
+        run: |
+          curl -fsSL --retry 3 \
+            "https://github.com/${SUNRISE_REPO}/releases/download/sdk-${SUNRISE_REV}/api-source.tar.xz" \
+            -o "$RUNNER_TEMP/api-source.tar.xz"
+          mkdir -p "${GITHUB_WORKSPACE}/${SDK_API_DIR}"
+          tar -xJf "$RUNNER_TEMP/api-source.tar.xz" -C "${GITHUB_WORKSPACE}/${SDK_API_DIR}"
+          echo "SDK api at ${GITHUB_WORKSPACE}/${SDK_API_DIR}:"
+          ls "${GITHUB_WORKSPACE}/${SDK_API_DIR}" | head -n 20
+
+      # Rust cache keyed on head SHA (per orchestrator: no stacked-PR special-casing).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "native/adaptation_sunrise -> ${{ env.CARGO_TARGET_DIR }}"
+          key: ${{ github.sha }}
+
+      - name: cargo check
+        run: cargo check --locked 2>&1 | tail -n 200
+
+      - name: cargo test (expect 81/81)
+        run: |
+          timeout 900 cargo test --locked 2>&1 | tee "$RUNNER_TEMP/sunrise-native-test.log" | tail -n 200
+          grep -Eq 'test result: ok\. 81 passed' "$RUNNER_TEMP/sunrise-native-test.log"
+
+  content:
+    name: content — cargo-sunrise-mod build + check --json (ok:true)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: content/adaptation
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Set CI temp dirs
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP/sunrise-tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP/sunrise-tmp" >> "$GITHUB_ENV"
+          echo "TMP=$RUNNER_TEMP/sunrise-tmp" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sunrise-tmp"
+
+      # cargo-sunrise-mod is not vendored / not on GH-hosted runners.
+      # Install the tool built for the pinned SDK revision, not unpinned latest.
+      - name: Cache cargo-sunrise-mod binary
+        id: tool-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-sunrise-mod
+          key: cargo-sunrise-mod-${{ runner.os }}-${{ env.SUNRISE_REV }}-${{ github.sha }}
+
+      - name: Install cargo-sunrise-mod
+        if: steps.tool-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git "https://github.com/${SUNRISE_REPO}" --rev "$SUNRISE_REV" \
+            cargo-sunrise-mod --locked --force
+
+      - name: Build content .smod (bounded)
+        run: timeout 900 cargo sunrise-mod build 2>&1 | tail -n 200
+
+      - name: Check content .smod (JSON, ok:true assertion)
+        run: |
+          # Discover the built .smod (output dir may be target/sunrise-mod or similar).
+          SMOD=$(find target -name 'adaptionwheel_content.smod' -type f | head -n 1)
+          echo "SMOD=$SMOD"
+          test -n "$SMOD"
+          timeout 300 cargo sunrise-mod check "$SMOD" --json | tee check.json
+          jq -e '.ok == true' check.json
+
+      - name: Upload .smod artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptionwheel-content-smod-${{ github.sha }}
+          path: content/adaptation/target/**/adaptionwheel_content.smod
+          if-no-files-found: error
+          retention-days: 7
