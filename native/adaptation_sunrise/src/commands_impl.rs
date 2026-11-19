@@ -93,6 +93,21 @@ pub fn register(event: &mut RegisterCommandsEvent<'_>) {
         Command::op("adaptionwheel wheel", OP_LEVEL),
         Command::op("adaptionwheel flight", OP_LEVEL),
         Command::op("adaptionwheel registry", OP_LEVEL),
+        // Console/dedicated-server reachability for the P1.6 diagnostics.
+        // `sunrise-server cmd` runs with CommandSource::Console (no acting
+        // player), so these need an explicit `<target:player>` to resolve a
+        // state to read/mutate. `resolve_target` already reads the `target`
+        // argument for every source; `diagnostic_arg_name`/`string_arg` keep
+        // reading `domain`/`concept` by name, so only the usages are new.
+        Command::op("adaptionwheel list <target:player> [domain:word]", OP_LEVEL),
+        Command::op("adaptionwheel info <target:player> <concept:word>", OP_LEVEL),
+        Command::op("adaptionwheel grantall <target:player> [domain:word]", OP_LEVEL),
+        Command::op("adaptionwheel shed <target:player> <concept:word>", OP_LEVEL),
+        Command::op("adaptionwheel ungrant <target:player> <concept:word>", OP_LEVEL),
+        Command::op("adaptionwheel analyze <target:player> <concept:word>", OP_LEVEL),
+        Command::op("adaptionwheel wheel <target:player>", OP_LEVEL),
+        Command::op("adaptionwheel flight <target:player>", OP_LEVEL),
+        Command::op("adaptionwheel registry <target:player>", OP_LEVEL),
     ]);
 }
 
