@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "SSS",
+    "SLS",
+    "SSS"
+  ],
+  "key": {
+    "S": "minecraft:stick",
+    "L": "#minecraft:logs"
+  },
+  "result": {
+    "id": "adaptionwheel:mahoraga_wheel_wood",
+    "count": 1
+  }
+}

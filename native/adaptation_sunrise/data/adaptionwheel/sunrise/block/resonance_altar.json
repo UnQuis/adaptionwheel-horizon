@@ -1,0 +1,6 @@
+{
+  "template": "minecraft:anvil",
+  "properties": {
+    "hardness": 3.0
+  }
+}
