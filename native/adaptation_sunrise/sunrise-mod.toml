@@ -3,6 +3,8 @@ name = "AdaptionWheel"
 version = "0.2.0"
 description = "AdaptionWheel adaptation core ported to Sunrise mod_api"
 authors = ["AlexQuasar"]
+api = "0.2"
+capabilities = ["registries"]
 side = "both"
 
 [native]
