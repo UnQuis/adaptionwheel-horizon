@@ -1,0 +1,12 @@
+# Native mod for AdaptionWheel (Horizon) — migrated to the new `mod_api`.
+# Old flat manifest format retained for horizon-launcher 0.2.69 compatibility:
+# `native-build` accepts a folder with horizon-mixin.toml + [api] path.
+[mod]
+id = "adaptionwheel"
+version = "0.2.0"
+
+[compatibility]
+horizon_revision = "8bc19c5f979b3724526a869393f2862904cea566"
+
+[api]
+path = "api"

@@ -1,0 +1,12 @@
+id = "adaptionwheel"
+name = "AdaptionWheel"
+version = "0.2.0"
+description = "AdaptionWheel adaptation core ported to Sunrise mod_api"
+authors = ["AlexQuasar"]
+api = "0.2"
+capabilities = ["registries"]
+side = "both"
+
+[native]
+game = "26.3"
+sunrise = "ed3ac19558d8dc1092c431312848cbb58fb01e41"
