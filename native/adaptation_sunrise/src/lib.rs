@@ -3,10 +3,11 @@
 //! Server-authoritative adaptation core. The `#[mod_api::sunrise_mod]` attribute
 //! derives the subscription list and exports `pub fn hooks()` for the launcher.
 use mod_api::{
-    self, Flow, Hooks, HostSide, HitHost, LivingDrownEvent, LivingFallEvent,
-    LivingIncomingDamageEvent, LoopContext, PlayerCloneEvent, PlayerInventoryChangedEvent,
-    PlayerLoggedInEvent, PlayerTickPostEvent, PlayerTickPreEvent, RegisterCommandsEvent,
-    Registrar, RegistrationContext, RunModCommandEvent, ServerHost,
+    self, Flow, Hooks, HostSide, HitHost, Identifier, LivingDrownEvent, LivingFallEvent,
+    LivingIncomingDamageEvent, LoopContext, PipelineBlend, PlayerCloneEvent,
+    PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerTickPostEvent, PlayerTickPreEvent,
+    RegisterCommandsEvent, RegisterRenderPipelinesEvent, Registrar, RegistrationContext,
+    RenderPipeline, RunModCommandEvent, ServerHost, WorldDepth,
 };
 
 mod abilities;
@@ -26,6 +27,29 @@ struct Mod;
 impl Hooks for Mod {
     fn register(&self, r: &mut dyn Registrar, cx: &RegistrationContext) {
         state_impl::register_attachments(r, cx);
+    }
+
+    /// Register the wheel's metal shader as an OPTIONAL render pipeline.
+    ///
+    /// `adaptionwheel:wheel_metal` resolves to
+    /// `assets/adaptionwheel/shaders/pipeline/wheel_metal.wgsl` (the Horizon GLSL
+    /// translation shipped in the content mod). `.optional()` means a resource
+    /// load that cannot compile the shader logs once and continues, instead of
+    /// failing the whole load — important while the shader is still being
+    /// validated against the Sunrise renderer.
+    fn register_render_pipelines(
+        &self,
+        _context: &RegistrationContext,
+        event: &mut RegisterRenderPipelinesEvent<'_>,
+    ) {
+        let Ok(id) = Identifier::parse("adaptionwheel:wheel_metal") else {
+            // Static id is known-valid; never take down resource loading for it.
+            return;
+        };
+        event.pipelines.push(
+            RenderPipeline::new(id.clone(), id, PipelineBlend::Translucent, WorldDepth::Tested)
+                .optional(),
+        );
     }
 
     fn register_commands(&self, host: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
