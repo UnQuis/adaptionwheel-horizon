@@ -6,6 +6,8 @@ _Docs-only companion to `docs/reference/ADAPTATION_SYSTEM_MAP.md`. Compiled 2026
 
 Heads at audit: #4 `cf987c0`→`main`; #5 `fc581fff`→#4 (older snapshots `70f844d`); #6 `3a715bb`→`main`; #7 `3f044c5`→#5; #8 `4a0d66b`→#5; #9 `9ce3432`→#7; #11 `cac5cf86`→#5; #12 `2f91bdc`→#5; #13 `c0b0569`→#5; #14 `f2db6f3`→`main`.
 
+**Target change (user decision, 2026-11-19):** **Sunrise is primary**. Horizon stack #4–#13 and new-API PRs #15–#17 are archive/alternative. Current path: PR #17 (migrated core) → PR #19 (Sunrise feasibility port). See `docs/SUNRISE_TARGET_STATUS.md`.
+
 - **#8/#11 conflict:** both modify `native/adaptation/api/src/lib.rs` on #5. Merge #8 clean; #11 on top → conflict (still against `#5@fc581fff`), recorded in issue #10 comments `6875182718` / `6875209318`.
 - **Resolution:** PR #12 (`2f91bdc`, base `#5@fc581fff`) combines #8+#11 (issue #10 `6875615437`). Proposed merge order (issue #10 `6875628303`): **#4 → #5 → #7 → #12 (instead of #8/#11) → #9 → #6**, then revalidate on final heads.
 
@@ -24,10 +26,15 @@ Heads at audit: #4 `cf987c0`→`main`; #5 `fc581fff`→#4 (older snapshots `70f8
 | #12 `2f91bdc` | Combined native #8+#11 | `cargo check -q` PASS + `cargo test -q` **10/0** (Linux 1.99.1, `CARGO_TARGET_DIR=/mnt/Barracuda/tmp/cargo-target-combo`, `/tmp/opencode/combine-811`; issue #10 `6875615437`); PR #13 cites independent rerun. Runtime: build `native-9f42064-67f92751b91f` via `horizon-launcher native-build … --instance adaptionwheel-test --ignore-pins --trust-native-code` (~46 s, `/mnt/Barracuda/tmp/native-build-pr12.log`, `HORIZON_HOME` set), headless `horizon-ctl` checks above | Not rerun by this register; matrix incomplete | Full runtime matrix on final artifacts; CI; decide #8/#11 supersession | **Partial runtime confirmed**, not 100% |
 | #13 `c0b0569` | Docs-only gate update for #12 | Docs-only PR/commits | Branch-only summaries | Reconcile with final heads/SHAs/issue #10 | Drift risk |
 | #14 `f2db6f3` | Docs-only adaptation system map | Docs-only PR (this integration adds §7/§8 and companion docs) | File absent in the shared checkout because it lives on `docs/adaptation-system-map` | Review/merge; refresh after final runtime/merge decisions | Open |
+| #15 `feat/native-v2-lead-agent3` | Horizon new-`mod_api` core v2 (`8bc19c5f97`) | PR body/branch; not re-run here | — | **Archive/alternative** — no further gating unless Sunrise fails | Open |
+| #16 `feat/native-p1-lead-agent3` | Native P1 core mechanics from Java (pure modules) | PR body/branch; not re-run here | — | Archive/alternative; code lineage feeds #17/#19 | Open |
+| #17 `feat/native-integrate-lead` (`afcc334`) | Integrate P1 adaptation systems into working hooks/commands/state | PR body/branch; base for #19 | — | Superseded for runtime by #19 on Sunrise | Open |
+| #18 `feat/wheel-model-shader` | Content: wheel model texture + metal shader | PR body; content-only | — | content build/check + Sunrise runtime render | Open |
+| #19 `feat/sunrise-api-port` | **Sunrise primary port** (`native/adaptation_sunrise/`) | PR #19: signed SDK `sdk-ed3ac19558d8dc1092c431312848cbb58fb01e41`; `cargo check` clean; `cargo test` **81 passed / 0 failed** (rustc 1.99.1, `CARGO_TARGET_DIR=/mnt/Barracuda/tmp/cargo-target-sunrise-2`); only two source edits from #17 | Runtime not claimed in PR | `cargo sunrise-mod build`/launcher native-build, `sunrise-ctl` in-game matrix, content parity, CI | Open, **primary** |
 
 ## Cross-cutting gaps
 
 - Partial runtime exists (issue #10, PR #12 build), but the full scenario/mitigation/console/sync/content-runtime matrix and CI are still needed for the 100% gate.
 - Heads/SHAs evolve; #8/#11 vs #12 disposition and the final hmod artifact require final-head evidence.
-- **Confirmed/filed** Horizon API blocker: [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184) (signed SDK unavailable for fresh builds; blocks migration to upstream main native format). Adaptation-logic gap drafts remain conditional (see `docs/API_GAP_BLOCKER_CHECK.md`); file only with individual reproducible evidence.
+- Horizon SDK issue [#18184](https://github.com/horizon-rust/horizon/issues/18184) was **closed as our own setup error** (2026-11-19) — no longer a blocker. Sunrise primary target has an officially signed SDK and PR #19 evidence (81/81). Adaptation-logic gap drafts remain conditional (see `docs/API_GAP_BLOCKER_CHECK.md`); file only with individual reproducible evidence.
 - Upstream Horizon `main` mod API restructuring is a future migration caveat (see `docs/HORIZON_NATIVE_FORMAT_GUIDE.md`).

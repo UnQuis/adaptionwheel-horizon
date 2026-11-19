@@ -1,6 +1,8 @@
-# Horizon native mod format guide (AdaptionWheelRS)
+# Horizon native mod format guide — ARCHIVED / alternative path
 
-_Docs-only. Prepared from Ensemble task S4: upstream `horizon-rust/horizon` **main** verified via webfetch 2026-11-18; old/pinned format kept for comparison. Unverified items are marked explicitly. **Status: migration to the new format is BLOCKED** — no working `native-build` path yet; see §5 and [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184)._
+_Docs-only. Prepared from Ensemble task S4: upstream `horizon-rust/horizon` **main** verified via webfetch 2026-11-18; old/pinned format kept for comparison. Unverified items are marked explicitly._
+
+> **Status (2026-11-19): Horizon is no longer the primary target.** User decision: **Sunrise** is primary (officially signed SDK, two mechanical API edits from the migrated core, PR #19 `cargo test` 81/81). Horizon SDK issue [#18184](https://github.com/horizon-rust/horizon/issues/18184) was closed as our own setup error and is not an upstream blocker. This guide is kept as an **archive/alternative reference**; Horizon PRs #15–#17 are likewise archive/alternative. See `docs/SUNRISE_TARGET_STATUS.md` for the current path. The former §5 blocker note below is historical context only._
 
 ## 1. Upstream main: package and `[native]` in `horizon-mod.toml` (confirmed)
 

@@ -1,20 +1,14 @@
-# Horizon API blocker check — status: CONFIRMED, filed upstream
+# Blocker check — Horizon SDK issue CLOSED (our error); Sunrise primary
 
-_Docs-only companion to `docs/reference/ADAPTATION_SYSTEM_MAP.md`. Initial read-only investigation: Ensemble task S3 (2026-11-18); updated the same day after the orchestrator reproduced and filed a confirmed blocker. Owner: Agent #1 (docs/readiness)._
+_Docs-only companion to `docs/reference/ADAPTATION_SYSTEM_MAP.md`. Initial read-only investigation: Ensemble task S3 (2026-11-18); confirmed/filed the same day; updated 2026-11-19 after the user decision to target Sunrise. Owner: Agent #1 (docs/readiness)._
 
-## Conclusion
+## Conclusion (updated 2026-11-19)
 
-**A Horizon API blocker is now CONFIRMED and filed:** [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184) — no signed SDK for fresh builds.
+**[horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184) is CLOSED as our own setup error** — it was not an upstream Horizon defect. The reported symptoms (`sdk-<sha>/SHA256SUMS` 404, launcher `0.2.78` `E_SDK_SOURCE`, `0.2.69` offline, vendored SDK allowing only `cargo check`, PR #15 git-dependency path) were caused by our attempt to build against an unsigned/unavailable SDK, not by a missing Horizon API.
 
-S3's earlier finding (no confirmed API blocker) applied to the *adaptation logic* gaps listed below; those remain hypotheses/conditional. The confirmed blocker is in the **native mod build/SDK supply chain** for the upstream-new format:
+**Consequence:** the former Horizon SDK blocker no longer blocks the work. Per user decision, the primary target is now **Sunrise**, whose official signed SDK (`sdk-ed3ac19558d8dc1092c431312848cbb58fb01e41`, `sunrise-org/sunrise`) is available; PR #19 ports the migrated core with two mechanical API edits and passes `cargo test` **81/81**. See `docs/SUNRISE_TARGET_STATUS.md`.
 
-- `sdk-<sha>/SHA256SUMS` returns **404** for fresh/recent Horizon commits, so the signed SDK required by the new native mod format is unavailable.
-- Launcher `0.2.78` (binary `/mnt/Barracuda/tmp/opencode/launcher-0.2.78/horizon-launcher`) recognizes the flat `horizon-mod.toml` with `[native]`, but fails with **`E_SDK_SOURCE`** when it cannot obtain the SDK.
-- Launcher `0.2.69` offline path also fails.
-- A vendored SDK allows `cargo check` but **not `native-build`** — the blocker is specific to the signed/build path.
-- Port-side PR #15 (git dependency on `horizon-mod-api`) passes `cargo check` but does not unblock `native-build`.
-
-Consequence: the migration path from the pinned `f4d8d62c31` trait-hooks format to upstream main's `[native]`/macro format is **blocked** pending a response on issue #18184. This does not invalidate the already validated old-format runtime slice (issue #10).
+S3's original finding still applies to the *adaptation logic* gaps below: none of them is a confirmed Horizon API blocker, and no additional upstream issues have been filed. Horizon PRs #15–#17 are archive/alternative.
 
 ## Evidence reviewed (paths / refs)
 
@@ -36,11 +30,11 @@ Consequence: the migration path from the pinned `f4d8d62c31` trait-hooks format 
 | HUD/UI feedback for MVP indication | to validate | Prototype/runtime test showing inability (or concrete limits) to provide minimal progress/completion feedback via available HUD/screen/mod-screen APIs, with screenshots/logs and exact API constraints |
 | Content/runtime format support (OBJ models, shaders, fonts, client item defs) | to validate | In-game verification with final native+content stack on target instance; if unsupported and no viable alternative, scoped request with runtime logs/screenshots |
 
-## Filed issue
+## Former issue (closed)
 
-- **Issue:** https://github.com/horizon-rust/horizon/issues/18184 (canonical tracker `horizon-rust/horizon/issues`). Filed by the orchestrator after reproducing the SDK failure.
-- **Title/topic:** signed SDK missing for fresh builds (`sdk-<sha>/SHA256SUMS` 404; launcher `0.2.78` `E_SDK_SOURCE`; `0.2.69` offline; vendored SDK only covers `cargo check`).
-- **Status:** awaiting upstream response. While open, do **not** attempt to claim the new native format is buildable; keep the pinned old-format build as the working path.
+- **Issue:** [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184), filed by the orchestrator after reproducing the SDK failure.
+- **Title/topic:** signed SDK reportedly missing for fresh builds (`sdk-<sha>/SHA256SUMS` 404; launcher `0.2.78` `E_SDK_SOURCE`; `0.2.69` offline; vendored SDK only covered `cargo check`).
+- **Status (2026-11-19): CLOSED as our own setup error.** Do not cite it as an upstream defect or as a current blocker. The Horizon new-format path remains archive/alternative; Sunrise is primary.
 
 ## Filing policy for the remaining candidate gaps
 

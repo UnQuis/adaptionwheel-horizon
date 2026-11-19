@@ -1,6 +1,8 @@
-# Migration work plan — AdaptionWheel Horizon port
+# Migration work plan — AdaptionWheel native port (Sunrise primary)
 
-_Docs-only companion to `docs/reference/ADAPTATION_SYSTEM_MAP.md` §§4–5 (Ensemble task S5, 2026-11-18; reconciled to the actual map and the partial runtime evidence from issue #10). Owner: Agent #1 (docs/readiness); execution owners are the role IDs below._
+_Docs-only companion to `docs/reference/ADAPTATION_SYSTEM_MAP.md` §§4–5 (Ensemble task S5, 2026-11-18; reconciled 2026-11-19 to the user decision: **Sunrise primary**, Horizon archive/alternative). Owner: Agent #1 (docs/readiness); execution owners are the role IDs below._
+
+**Target decision (2026-11-19):** Sunrise is primary — official signed SDK (`sdk-ed3ac19558d8dc1092c431312848cbb58fb01e41`), two mechanical API edits from the migrated core, PR #19 `cargo test` **81/81**. Horizon SDK issue #18184 closed as our own setup error. See `docs/SUNRISE_TARGET_STATUS.md`.
 
 ## Roles
 - **#1 Docs/Readiness:** docs, evidence register, gap register, gate packets, tracker hygiene.
@@ -12,14 +14,15 @@ _Docs-only companion to `docs/reference/ADAPTATION_SYSTEM_MAP.md` §§4–5 (Ens
 
 | ID | Task | Dependencies | Owner | Acceptance | Evidence gate |
 |---|---|---|---|---|---|
-| P0.1 | Compose parallel native #8/#11 via #12 on final #5 base; decide #8/#11 supersession | final heads | #3,#4 | Clean composed state, both features preserved | SHAs/refs; `cargo check -q && cargo test -q` PASS; review notes |
+| **P0.0** | **Sunrise native-build + runtime gate (primary)**: PR #19 head, signed SDK, installed launcher 1.1.1 (`/mnt/Barracuda/tmp/opencode/sunrise-launcher/sunrise-launcher`), profile `sunrise`, nightly `nightly-2026-11-19-ed3ac19` | #19 | #3,#4,#2 | Build succeeds and in-game matrix passes: commands, activation, persistence, target selectors | exact command/flags/build id/logs/env + `sunrise-ctl` artifacts; content rebuild for #18 |
+| P0.1 | Compose parallel native #8/#11 via #12 on final #5 base; decide #8/#11 supersession (archive Horizon path only) | final heads | #3,#4 | Clean composed state, both features preserved | SHAs/refs; `cargo check -q && cargo test -q` PASS; review notes |
 | P0.2 | Reproduce native tests on canonical heads and composed state | P0.1 | #4,#3 | PASS with recorded toolchain | commands + cargo/rustc versions + SHA + test counts |
 | P0.3 | Reproduce content build/check on final artifact | P0.1, #7 schema fixes | #2,#4 | `cargo-horizon-mod build` + `check --json` ok | tool version, artifact path, sha256/size, SHA (confirm/supersede `5c86ca5f…` / `3cee70ad…`) |
 | P0.4 | Complete runtime matrix on final native+content stack | P0.2,P0.3 | #4,#2,#3 | Each case pass/fail: six commands (incl. console), 41-slot activation, fall/explosion/fire/lava/drown/contact/general progress+mitigation **outside creative mode**, relog/clone/respawn persistence, content render/formats | steps/commands + logs/screenshots/video + SHAs/env per case (builds on issue #10 partial evidence) |
 | P0.5 | Minimal CI: native tests + content build/check | P0.2,P0.3 stable | #1,#4,#2,#3 | PR checks run on relevant SHAs | workflow/check URLs + green runs + local parity commands |
 | P0.6 | Stack/docs/gate reconciliation and merge decision | P0.1–P0.5 | #1,#4 | Exact evidence in docs/PRs; merge order explicit; only fully evidenced scopes merge | updated map/register/evidence docs; blockers/rebase notes |
 
-Proposed merge order (issue #10): **#4 → #5 → #7 → #12 (preferred over #8/#11) → #9 → #6**, with docs #13/#14 reconciled; revalidate on final heads.
+Proposed order: **primary Sunrise path — #17 → #19 → runtime validation (#18 content as ready)**; archived Horizon path (only if Sunrise fails) — #4 → #5 → #7 → #12 (preferred over #8/#11) → #9 → #6, with docs #13/#14 reconciled; revalidate on final heads.
 
 ## P1 — core MVP parity and validated gaps
 
@@ -56,6 +59,7 @@ Proposed merge order (issue #10): **#4 → #5 → #7 → #12 (preferred over #8/
 
 ## Risks / open items
 
-- Upstream Horizon `main` mod API restructuring (generated API, `horizon_mod`/`Registrar`, attachments runtime) is a separate migration track — **blocked** by [horizon-rust/horizon#18184](https://github.com/horizon-rust/horizon/issues/18184) (no signed SDK for fresh builds); see `docs/HORIZON_NATIVE_FORMAT_GUIDE.md`. Continue on the pinned `f4d8d62c31` path until resolved.
+- Horizon `main` new-format path (#15–#17) and the old pinned stack (#4–#12) are **archive/alternative** after the 2026-11-19 decision. Issue [#18184](https://github.com/horizon-rust/horizon/issues/18184) was closed as our own setup error — no upstream blocker. Do not gate the Sunrise work on Horizon PRs.
+- Sunrise runtime evidence is still missing: PR #19 proves compile/test only (81/81), not in-game behavior. `native-build` status must be recorded before any merge-readiness claim.
 - No CI/status checks on PRs; heads/SHAs drift; final hmod artifact (`5c86ca5f…` vs later `3cee70ad…`) must be reconciled.
 - Do not claim unsupported content/data parity (`docs/CONTENT_DATA_PARITY.md`).
