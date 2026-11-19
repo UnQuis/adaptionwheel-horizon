@@ -1,4 +1,3 @@
 {
-  "template": "minecraft:compass",
-  "item": true
+  "template": "minecraft:compass"
 }
