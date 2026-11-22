@@ -1,0 +1,81 @@
+# Sword of Extermination blade, exported from ~/Blender/SOE.blend (Blender 5.3).
+#
+# The model is authored pointing straight DOWN: the tip is at -Y, the handle end at +Y,
+# the blade's flat faces look along +-X and its width runs along Z. That is Blender's
+# own -Z up axis converted to OBJ's Y-up by the standard NEGATIVE_Z/Y export, so no
+# extra rotation is baked in here -- what points down in Blender points down in game.
+# Base (handle end) is +4.147, tip is -4.909, so the mesh is 9.056 units long; the
+# renderer centres it and moves it by -height/2 to hang the blade from its base.
+# UVs are the author's, occupying u 0.53..0.70, v 0.47..0.72 of soe_blade.png.
+# Normals are deliberately absent: ObjMesh derives a flat one per triangle, which is
+# what faceted steel wants, and keeps this file in the same shape it always was.
+o defaultMaterial.002
+v -0.896434 -4.328592 -0.002627
+v -0.861680 -2.883526 0.757124
+v -0.775506 4.125992 -0.021904
+v -0.862271 -2.920063 -0.828173
+v -0.898395 -3.213482 -1.028591
+v -0.939519 -4.908741 0.010756
+v -0.897647 -3.167398 0.970875
+v -0.850343 4.141956 0.592158
+v -0.910947 4.147121 0.752580
+v -0.911529 4.111420 -0.796437
+v -0.850801 4.113651 -0.635994
+v -0.954549 -4.327190 -0.002640
+v -0.939519 -4.908741 0.010756
+v -0.897647 -3.167398 0.970875
+v -0.919793 -2.882123 0.757113
+v -1.046971 4.132545 -0.021955
+v -0.971673 4.144888 0.592135
+v -0.910947 4.147121 0.752580
+v -0.911529 4.111420 -0.796437
+v -0.898395 -3.213482 -1.028591
+v -0.920388 -2.918659 -0.828183
+v -0.972133 4.116581 -0.636018
+vt 0.538472 0.684368
+vt 0.540648 0.677321
+vt 0.536295 0.657135
+vt 0.604620 0.472076
+vt 0.555602 0.663065
+vt 0.557035 0.667351
+vt 0.532680 0.659848
+vt 0.597149 0.469743
+vt 0.595078 0.469096
+vt 0.614168 0.475059
+vt 0.612096 0.474412
+vt 0.697906 0.690405
+vt 0.693696 0.710632
+vt 0.695882 0.717698
+vt 0.701521 0.693119
+vt 0.637213 0.503031
+vt 0.629733 0.505358
+vt 0.639286 0.502385
+vt 0.622264 0.507693
+vt 0.620192 0.508339
+vt 0.677164 0.700615
+vt 0.678598 0.696331
+s 1
+f 6/1 1/2 2/3
+f 2/3 1/2 3/4
+f 3/4 1/2 4/5
+f 5/6 4/5 1/2
+f 1/2 6/1 5/6
+f 2/3 7/7 6/1
+f 7/7 2/3 8/8
+f 8/8 9/9 7/7
+f 3/4 8/8 2/3
+f 4/5 5/6 10/10
+f 10/10 11/11 4/5
+f 4/5 11/11 3/4
+f 15/12 12/13 13/14
+f 13/14 14/15 15/12
+f 17/16 16/17 12/13
+f 12/13 15/12 17/16
+f 15/12 14/15 18/18
+f 18/18 17/16 15/12
+f 22/19 19/20 20/21
+f 20/21 21/22 22/19
+f 22/19 21/22 12/13
+f 12/13 16/17 22/19
+f 21/22 20/21 13/14
+f 13/14 12/13 21/22
