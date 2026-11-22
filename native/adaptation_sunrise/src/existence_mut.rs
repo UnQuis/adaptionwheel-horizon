@@ -66,7 +66,7 @@ pub const DROP_KILL_THRESHOLDS: [u32; MAX_LEVEL as usize] = [1, 5, 10, 30, 100, 
 pub const FLIGHT_ALTITUDE: f64 = 310.0;
 pub const DIMENSION_DESTROY_PERCENT: u32 = 80;
 /// `FistTiers.tierOf(state) != 1` in `FistMastery.tryUnlock` (stone tier).
-pub const FIST_STONE_TIER: u8 = 1;
+pub const FIST_STONE_TIER: i32 = 1;
 /// `data.targetRotation += (float)(Math.PI / 2)` on an existence grant.
 pub const TARGET_ROTATION_STEP_RAD: f32 = std::f32::consts::FRAC_PI_2;
 
@@ -353,7 +353,13 @@ pub fn flight_mutation_ready(
 
 /// Upstream `FistMastery.tryUnlock`: maxed `Mine_Labor` and mining a tier-1
 /// (stone) block. Event-driven, so it is not part of the per-tick resolver.
-pub fn fist_mutation_ready(mine_labor_level: u8, block_tier: u8, already_adapted: bool) -> bool {
+///
+/// `mine_labor_level` must be `level_or_zero(Mine_Labor)`, i.e. **0 when the
+/// concept is switched off** — upstream uses `data.levelOrZero(Concepts.MINE_LABOR)`,
+/// not the raw `level()` used by the flight gate above. This pure function has
+/// no state to check the off switches itself; passing a raw maxed level would
+/// wrongly unlock the mutation for a player who disabled `Mine_Labor`.
+pub fn fist_mutation_ready(mine_labor_level: u8, block_tier: i32, already_adapted: bool) -> bool {
     !already_adapted && mine_labor_level >= MAX_LEVEL && block_tier == FIST_STONE_TIER
 }
 
@@ -472,6 +478,8 @@ mod tests {
         assert_eq!(ENV_FALL, "Env_FallDamage");
         assert_eq!(ENV_DROWN, "Env_Drowning");
         assert_eq!(MUTATION_SEA_EYE, "Mutation_SeaEye");
+        assert_eq!(MUTATION_PREFIX, "Mutation_");
+        assert_eq!(MINE_LABOR, "Mine_Labor");
     }
 
     #[test]
@@ -761,6 +769,28 @@ mod tests {
         assert!(!fist_mutation_ready(MAX_LEVEL - 1, FIST_STONE_TIER, false));
         assert!(!fist_mutation_ready(MAX_LEVEL, 0, false));
         assert!(!fist_mutation_ready(MAX_LEVEL, FIST_STONE_TIER, true));
+    }
+
+    #[test]
+    fn fist_gate_contract_requires_level_or_zero_not_raw_level() {
+        // Upstream FistMastery.tryUnlock uses data.levelOrZero(MINE_LABOR): a
+        // maxed concept the player switched off reads as 0. Model that boundary
+        // here, since this pure function has no off-switch state of its own.
+        let level_or_zero = |level: u8, disabled: bool| if disabled { 0 } else { level };
+
+        assert!(fist_mutation_ready(
+            level_or_zero(MAX_LEVEL, false),
+            FIST_STONE_TIER,
+            false
+        ));
+        assert!(!fist_mutation_ready(
+            level_or_zero(MAX_LEVEL, true),
+            FIST_STONE_TIER,
+            false
+        ));
+        // Passing the raw maxed level for a disabled concept WOULD unlock it —
+        // the divergence the level_or_zero contract exists to prevent.
+        assert!(fist_mutation_ready(MAX_LEVEL, FIST_STONE_TIER, false));
     }
 
     #[test]
