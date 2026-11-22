@@ -114,15 +114,9 @@ impl Hooks for Mod {
         hooks_impl::player_tick_pre(host, event);
     }
 
-    fn player_tick_post(&self, host: HostSide, event: &mut PlayerTickPostEvent) {
-        hooks_impl::player_tick_post(host, event);
-        if let HostSide::Server(server) = host {
-            let snap = synergy_snapshot(event.player.uuid());
-            let effects = gameplay_wiring::synergy_effects_for(&snap);
-            if !effects.is_empty() {
-                let _ = gameplay_wiring::apply_synergy_effects(server, event.player, &effects);
-            }
-        }
+    fn player_tick_post(&self, _host: HostSide, _event: &mut PlayerTickPostEvent) {
+        // Synergy on-hit effects need the struck entity; applying them here would
+        // ignite/slow the wearer every tick. Wiring them to the damage hook is pending.
     }
 
     fn player_inventory_changed(
