@@ -2,7 +2,7 @@
 # Updated target: Horizon origin/main (MC 26.3-era APIs), includes inventory hooks for in-inventory activation.
 [mod]
 id = "adaptionwheel"
-version = "0.2.0"
+version = "0.2.1"
 
 [compatibility]
 horizon_revision = "f4d8d62c31"
