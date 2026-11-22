@@ -10,9 +10,11 @@
 //! - Debug commands: /adaptionwheel status|activate|set|grant|reset|help
 
 use horizon_client::mod_api::{
-    Flow, Hooks, Host, LivingDrownEvent, LivingFallEvent, LivingIncomingDamageV3Event,
-    NativeCommand, NativeServerPlayer, PerformCommandEvent, PlayerCloneEvent,
-    PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerTickEvent, RegisterCommandsEvent, Text,
+    AttachmentCodec, AttachmentError, AttachmentType, Compound, Flow, Holder, Hooks, Host,
+    LivingDrownEvent, LivingFallEvent, LivingIncomingDamageV3Event, NativeCommand,
+    NativeServerPlayer, PerformCommandEvent, PerformConsoleCommandEvent, PlayerCloneEvent,
+    PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerTickEvent, RegisterCommandsEvent, Tag,
+    Text,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -90,6 +92,9 @@ struct PlayerAdaptationStateV1 {
     wheel_active: bool,
     active_source: WheelSource,
     entries: BTreeMap<String, AdaptationEntry>,
+    /// Runtime-only: mark cache as needing persistence flush (not serialized).
+    #[serde(skip)]
+    dirty_persist: bool,
 }
 
 impl Default for PlayerAdaptationStateV1 {
@@ -103,6 +108,7 @@ impl Default for PlayerAdaptationStateV1 {
             wheel_active: false,
             active_source: WheelSource::None,
             entries,
+            dirty_persist: false,
         }
     }
 }
@@ -219,8 +225,90 @@ fn set_player_activation(player: u128, scan: ActivationScan) -> bool {
         let changed = state.wheel_active != scan.active || state.active_source != scan.source;
         state.wheel_active = scan.active;
         state.active_source = scan.source;
+        if changed {
+            state.dirty_persist = true;
+        }
         changed
     })
+}
+
+// --- Attachment-backed persistence (best-effort, in-memory cache remains runtime source of truth) ---
+
+fn encode_player_state_nbt(state: &PlayerAdaptationStateV1) -> Result<Compound, AttachmentError> {
+    let json = serde_json::to_string(state).map_err(|_| AttachmentError::Encode)?;
+    let mut c = Compound::new();
+    c.insert("v".into(), Tag::Int(STATE_SCHEMA_VERSION as i32));
+    c.insert("json".into(), Tag::String(json.as_str().into()));
+    Ok(c)
+}
+
+fn decode_player_state_nbt(compound: &Compound) -> Result<PlayerAdaptationStateV1, AttachmentError> {
+    let Some(Tag::String(json)) = compound.get(&"json".into()) else {
+        return Err(AttachmentError::Decode);
+    };
+    let s = json.to_string().map_err(|_| AttachmentError::Decode)?;
+    let mut state: PlayerAdaptationStateV1 =
+        serde_json::from_str(&s).map_err(|_| AttachmentError::Decode)?;
+    state.normalize();
+    state.dirty_persist = false;
+    Ok(state)
+}
+
+static PLAYER_STATE_ATTACHMENT: AttachmentType<PlayerAdaptationStateV1> = AttachmentType {
+    namespace: "adaptionwheel",
+    name: "player_state",
+    default: PlayerAdaptationStateV1::default,
+    codec: Some(AttachmentCodec {
+        encode: encode_player_state_nbt,
+        decode: decode_player_state_nbt,
+    }),
+    copy_on_death: true,
+    sync: false,
+};
+
+fn load_player_state_from_attachment(host: &mut dyn Host, player: u128) -> Option<PlayerAdaptationStateV1> {
+    PLAYER_STATE_ATTACHMENT
+        .get_existing(host, Holder::Player(player))
+        .ok()
+        .flatten()
+        .map(|mut s| {
+            s.normalize();
+            s.dirty_persist = false;
+            s
+        })
+}
+
+fn save_player_state_to_attachment(host: &mut dyn Host, player: u128, state: &PlayerAdaptationStateV1) {
+    let mut to_save = state.clone();
+    to_save.normalize();
+    to_save.dirty_persist = false;
+    let _ = PLAYER_STATE_ATTACHMENT.set(host, Holder::Player(player), to_save);
+}
+
+fn sync_cache_from_attachment_if_present(host: &mut dyn Host, player: u128) {
+    if let Some(loaded) = load_player_state_from_attachment(host, player) {
+        with_player_state(player, |state| {
+            *state = loaded;
+        });
+    } else {
+        // Ensure attachment exists with current/default state for future persistence.
+        let current = get_player_state(player);
+        save_player_state_to_attachment(host, player, &current);
+    }
+}
+
+fn persist_player_state_if_needed(host: &mut dyn Host, player: u128, force: bool) {
+    let mut should_save = force;
+    let state = with_player_state(player, |state| {
+        if state.dirty_persist {
+            should_save = true;
+            state.dirty_persist = false;
+        }
+        state.clone()
+    });
+    if should_save {
+        save_player_state_to_attachment(host, player, &state);
+    }
 }
 
 // --- Entity id -> player uuid mapping (for hooks that provide entity id but not uuid/host) ---
@@ -390,9 +478,11 @@ fn apply_leveled_progress(
         entry.completed = true;
         entry.progress = 0.0;
     }
-    before.0 != entry.level
+    let changed = before.0 != entry.level
         || (before.1 - entry.progress).abs() > f32::EPSILON
-        || before.2 != entry.completed
+        || before.2 != entry.completed;
+    if changed { state.dirty_persist = true; }
+    changed
 }
 
 fn mitigation_factor_for_concept(state: &PlayerAdaptationStateV1, concept: &str) -> f32 {
@@ -423,7 +513,9 @@ fn apply_fall_progress(state: &mut PlayerAdaptationStateV1, distance_or_damage: 
         entry.level = 1;
         entry.completed = true;
     }
-    (entry.progress - before).abs() > f32::EPSILON || entry.completed
+    let changed = (entry.progress - before).abs() > f32::EPSILON || entry.completed;
+    if changed { state.dirty_persist = true; }
+    changed
 }
 
 fn fall_mitigation_factor(state: &PlayerAdaptationStateV1) -> f32 {
@@ -530,7 +622,7 @@ fn apply_set_command(
 ) -> Result<String, String> {
     let field = field.to_ascii_lowercase();
     let max_level = concept_max_level(concept);
-    match concept {
+    let res = match concept {
         CONCEPT_FALL => {
             let e = state.entry_mut(CONCEPT_FALL);
             match field.as_str() {
@@ -589,7 +681,11 @@ fn apply_set_command(
             }
         }
         _ => Err("unsupported concept".to_string()),
+    };
+    if res.is_ok() {
+        state.dirty_persist = true;
     }
+    res
 }
 
 fn apply_grant_command(
@@ -598,7 +694,7 @@ fn apply_grant_command(
     level: u8,
 ) -> Result<String, String> {
     let max_level = concept_max_level(concept);
-    match concept {
+    let res = match concept {
         CONCEPT_FALL => {
             let e = state.entry_mut(CONCEPT_FALL);
             if level >= 1 {
@@ -622,7 +718,11 @@ fn apply_grant_command(
             Ok(format!("granted {} level {}", concept, lvl))
         }
         _ => Err("unsupported concept".to_string()),
+    };
+    if res.is_ok() {
+        state.dirty_persist = true;
     }
+    res
 }
 
 fn handle_adaptionwheel_command(player: &NativeServerPlayer, command: &str) -> (bool, String) {
@@ -649,6 +749,7 @@ fn handle_adaptionwheel_command(player: &NativeServerPlayer, command: &str) -> (
         "reset" => {
             with_player_state(player.uuid, |state| {
                 *state = PlayerAdaptationStateV1::default();
+                state.dirty_persist = true;
             });
             let state = get_player_state(player.uuid);
             (true, format!("[{MOD_ID}] reset done. {}", format_status(&state)))
@@ -711,6 +812,40 @@ fn handle_adaptionwheel_command(player: &NativeServerPlayer, command: &str) -> (
     }
 }
 
+fn handle_adaptionwheel_console_command(command: &str) -> (bool, String) {
+    let trimmed = command.trim();
+    if !trimmed.eq_ignore_ascii_case("adaptionwheel") && !trimmed.to_ascii_lowercase().starts_with("adaptionwheel ") {
+        return (false, String::new());
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let _ = parts.next();
+    let sub = parts.next().unwrap_or("help");
+
+    match sub.to_ascii_lowercase().as_str() {
+        "help" => (
+            true,
+            format!(
+                "[{MOD_ID}] console: help | status/reset/activate/set/grant require player context (use in-game as player or target-specific command when available)"
+            ),
+        ),
+        "status" | "reset" | "activate" | "set" | "grant" => (
+            true,
+            format!(
+                "[{MOD_ID}] '{}' requires player context and is not available from dedicated console in this build; run it as an in-game player command.",
+                sub.to_ascii_lowercase()
+            ),
+        ),
+        _ => (
+            true,
+            format!(
+                "[{MOD_ID}] unknown subcommand '{}'. Console supports: help",
+                sub
+            ),
+        ),
+    }
+}
+
 fn tell_login_status(host: &mut dyn Host, event: &PlayerLoggedInEvent<'_>, state: &PlayerAdaptationStateV1) {
     host.tell(
         event.player,
@@ -751,30 +886,55 @@ impl Hooks for Mod {
         if !handled {
             return Flow::Continue;
         }
+        // Persist any command-driven mutations (set/grant/reset) best-effort.
+        persist_player_state_if_needed(host, event.player.uuid, true);
+        host.feedback(Text::literal(message));
+        Flow::Cancel
+    }
+
+    fn perform_console_command(&self, host: &mut dyn Host, event: &mut PerformConsoleCommandEvent<'_>) -> Flow {
+        let (handled, message) = handle_adaptionwheel_console_command(event.command);
+        if !handled {
+            return Flow::Continue;
+        }
         host.feedback(Text::literal(message));
         Flow::Cancel
     }
 
     fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {
         refresh_entity_player_map_from_host(host);
+        // Best-effort: load persisted attachment state into runtime cache; if missing, seed attachment.
+        sync_cache_from_attachment_if_present(host, event.player);
         let state = get_player_state(event.player);
         tell_login_status(host, event, &state);
+        persist_player_state_if_needed(host, event.player, false);
     }
 
-    fn player_clone(&self, _host: &mut dyn Host, event: &mut PlayerCloneEvent<'_>) {
-        let mut state = get_player_state(event.player);
-        state.normalize();
-        with_player_state(event.player, |s| *s = state.clone());
+    fn player_clone(&self, host: &mut dyn Host, event: &mut PlayerCloneEvent<'_>) {
+        // Attachment has copy_on_death=true; reload copied state if available.
+        sync_cache_from_attachment_if_present(host, event.player);
+        with_player_state(event.player, |s| {
+            s.normalize();
+            s.dirty_persist = false;
+        });
+        persist_player_state_if_needed(host, event.player, false);
         let _ = event.was_death;
     }
 
     fn player_tick(&self, host: &mut dyn Host, _event: &mut PlayerTickEvent) {
         // Keep entity-id -> player-uuid map fresh for hooks that only provide entity ids.
         refresh_entity_player_map_from_host(host);
+        // Best-effort persistence flush for mutations made in hooks without host access.
+        // (Limited to online players known to server; cheap check per tick.)
+        for p in host.server_players() {
+            persist_player_state_if_needed(host, p.uuid, false);
+        }
     }
 
     /// Inventory scan enables wheel activation anywhere in inventory.
     fn player_inventory_changed(&self, host: &mut dyn Host, event: &mut PlayerInventoryChangedEvent<'_>) {
+        // Ensure cache reflects persisted state before applying activation changes.
+        sync_cache_from_attachment_if_present(host, event.player);
         let scan = activation_from_inventory_stacks(event.stacks);
         let changed = set_player_activation(event.player, scan);
         if changed {
@@ -787,6 +947,7 @@ impl Hooks for Mod {
                 )),
             );
         }
+        persist_player_state_if_needed(host, event.player, false);
     }
 
     /// Primary damage adaptation hook (has victim UUID): fire/lava/explosion/general/drowning/contact fallbacks.

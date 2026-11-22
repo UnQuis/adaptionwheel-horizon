@@ -1,0 +1,13 @@
+id = "adaptionwheel"
+name = "AdaptionWheel"
+version = "0.3.0"
+description = "AdaptionWheel adaptation core on the latest Horizon mod API"
+authors = ["AlexQuasar"]
+api = "0.2"
+side = "both"
+capabilities = ["registries"]
+
+[native]
+game = "26.3"
+horizon = "2b77287de099c9316278ba7ac4d83590fdb7ef30"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

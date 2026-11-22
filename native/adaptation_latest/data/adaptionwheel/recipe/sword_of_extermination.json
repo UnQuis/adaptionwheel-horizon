@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " N ",
+    "GWG",
+    " S "
+  ],
+  "key": {
+    "N": "minecraft:netherite_ingot",
+    "G": "minecraft:gold_ingot",
+    "W": "adaptionwheel:mahoraga_wheel",
+    "S": "minecraft:stick"
+  },
+  "result": {
+    "id": "adaptionwheel:sword_of_extermination",
+    "count": 1
+  }
+}
