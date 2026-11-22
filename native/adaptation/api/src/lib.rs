@@ -9,6 +9,14 @@
 //! - Hooks integration: inventory activation, player tick mapping, incoming damage (v3), fall, drown.
 //! - Debug commands: /adaptionwheel status|activate|set|grant|reset|help
 
+mod concepts_registry;
+mod damage_categories;
+mod existence_mut;
+mod fist_ladders;
+mod state_v2;
+mod synergies;
+mod task_system;
+
 use horizon_client::mod_api::{
     AttachmentCodec, AttachmentError, AttachmentType, Compound, Flow, Holder, Hooks, Host,
     LivingDrownEvent, LivingFallEvent, LivingIncomingDamageV3Event, NativeCommand,
