@@ -1,4 +1,3 @@
 {
-  "template": "minecraft:nether_star",
-  "item": true
+  "template": "minecraft:nether_star"
 }
