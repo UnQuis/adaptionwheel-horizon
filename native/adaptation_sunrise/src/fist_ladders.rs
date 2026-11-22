@@ -3,8 +3,14 @@
 //!
 //! Like `state_v2.rs` and `engine_impl.rs`, this module has no `mod_api`, no
 //! globals and no `Host`: every rule takes plain values so the HUD, progress
-//! banking and integration layer can all agree on one implementation. Callers
-//! read levels from `PlayerAdaptionV2` (via `level_or_zero`) and pass them in.
+//! banking and integration layer can all agree on one implementation.
+//!
+//! The tier functions take **raw** `levels[concept]` values, never
+//! `PlayerAdaptionV2::level_or_zero`. Upstream `FistTiers.reachTier`,
+//! `MartialArts.currentTier` and `MartialArts.trainingTier` read `level()` on
+//! purpose: a switched-off but maxed stage stays maxed and hands progress to
+//! the next stage. `level_or_zero` would make it look untrained, dropping the
+//! granted tier or reopening the disabled stage as the training target.
 
 use std::collections::BTreeSet;
 
@@ -15,8 +21,8 @@ pub const MAX_LEVEL: u8 = 8;
 
 /// Stone is the tier whose break unlocks the breaking fist (`tierOf(state) == 1`).
 pub const MINING_UNLOCK_BLOCK_TIER: i32 = 1;
+/// Key whose raw level the caller reads for [`mining_unlock_allowed`].
 pub const MINE_LABOR: &str = "Mine_Labor";
-pub const MUTATION_FIST: &str = "Mutation_Fist";
 
 pub const MINING_CONCEPTS: [&str; TIER_COUNT] = [
     "Fist_Wood",
@@ -111,6 +117,10 @@ pub fn can_harvest(required_tier: i32, tier: usize) -> bool {
 
 /// `FistTiers.reachTier` / mining ladder thresholds: walk consecutive maxed
 /// stages from Wood, then fall back to the highest stage ever trained.
+///
+/// Feed raw `levels[mining_concept(tier)]`, not `level_or_zero`: toggling off a
+/// maxed stage must not make it look untrained. The caller also owns the
+/// upstream `data.active("Mutation_Fist")` gate before calling this.
 pub fn mining_reach_tier(mut level_of: impl FnMut(usize) -> u8) -> usize {
     let mut progression = 0;
     while progression < TIER_COUNT - 1 && is_maxed(level_of(progression)) {
@@ -127,6 +137,9 @@ pub fn mining_reach_tier(mut level_of: impl FnMut(usize) -> u8) -> usize {
 }
 
 /// `MartialArts.currentTier`: -1 before the first bare-handed kill.
+///
+/// Feed raw `levels[combat_concept(tier)]`, not `level_or_zero`: the highest
+/// stage ever reached is permanent and must survive an off switch.
 pub fn combat_current_tier(level_of: impl Fn(usize) -> u8) -> i32 {
     let mut granted = -1;
     for tier in 0..TIER_COUNT {
@@ -139,6 +152,10 @@ pub fn combat_current_tier(level_of: impl Fn(usize) -> u8) -> i32 {
 
 /// `MartialArts.trainingTier`: a maxed stage hands its kills to the next one;
 /// a finished Netherite ladder cannot train further.
+///
+/// Feed raw `levels[combat_concept(tier)]`, not `level_or_zero`: a switched-off
+/// maxed stage must hand kills to the next stage, not be reopened as the
+/// training target (the bug guarded at `MartialArts.java:88-94`).
 pub fn combat_training_tier(level_of: impl Fn(usize) -> u8) -> i32 {
     let reached = combat_current_tier(&level_of);
     if reached < 0 {
@@ -171,7 +188,7 @@ pub fn combat_kill_trains(
 
 fn cost_for_level(base: f64, growth: f64, current_level: u8, tier_multiplier: f64) -> u32 {
     // Java clamps the exponent at 0, so level 0 and level 1 cost the same.
-    let exponent = current_level.saturating_sub(1) as u32;
+    let exponent = u32::try_from(current_level.saturating_sub(1)).unwrap_or(u32::MAX);
     let cost = base * growth.powf(exponent as f64) * tier_multiplier;
     cost.round().max(1.0) as u32
 }
@@ -205,7 +222,7 @@ pub enum TierProgress {
 }
 
 pub fn progress_after_event(done: u32, need: u32) -> TierProgress {
-    let have = done + 1;
+    let have = done.saturating_add(1);
     if have < need {
         TierProgress::NeedMore(have)
     } else {
@@ -216,6 +233,10 @@ pub fn progress_after_event(done: u32, need: u32) -> TierProgress {
 /// Upstream `PlayerAdaption.getAdaptCount`: the **union** of `adapted` and
 /// positive `levels` keys. A few concepts live in both collections; summing
 /// them double-counted and produced the 483-vs-503 menu/HUD mismatch.
+///
+/// Standalone on purpose: this file has no `crate::state_v2` dependency so it
+/// also compiles as its own unit-test target before the lead wires it in. The
+/// union rule mirrors `PlayerAdaptionV2::get_adapt_count` exactly.
 pub fn adapt_count<'a>(
     adapted: impl IntoIterator<Item = &'a str>,
     levels: impl IntoIterator<Item = (&'a str, u8)>,
@@ -295,6 +316,16 @@ mod tests {
     }
 
     #[test]
+    fn disabled_maxed_stage_keeps_mining_reach_tier() {
+        // Wood is maxed but switched off; raw levels still walk to Diamond.
+        let raw = [8u8, 8, 8, 0, 0];
+        assert_eq!(mining_reach_tier(|t| raw[t]), 3);
+        // Passing level_or_zero's view instead would drop Wood's grant.
+        let enabled_only = [0u8, 8, 8, 0, 0];
+        assert_eq!(mining_reach_tier(|t| enabled_only[t]), 2);
+    }
+
+    #[test]
     fn combat_tier_thresholds_and_training_handover() {
         assert_eq!(combat_current_tier(|_| 0), -1);
         assert_eq!(combat_training_tier(|_| 0), -1);
@@ -307,6 +338,21 @@ mod tests {
         assert_eq!(combat_training_tier(|_| MAX_LEVEL), (TIER_COUNT - 1) as i32);
         assert!(is_maxed(MAX_LEVEL));
         assert!(!is_maxed(MAX_LEVEL - 1));
+    }
+
+    #[test]
+    fn disabled_maxed_stage_hands_combat_training_to_next() {
+        // Wood maxed and switched off, Stone partly trained: Stone is trained.
+        let raw = [8u8, 3, 0, 0, 0];
+        assert_eq!(combat_current_tier(|t| raw[t]), 1);
+        assert_eq!(combat_training_tier(|t| raw[t]), 1);
+        // With only the disabled maxed stage reached, kills still go to Stone;
+        // the level_or_zero view would report -1 and "unlock" Wood again.
+        let only_disabled = [8u8, 0, 0, 0, 0];
+        assert_eq!(combat_current_tier(|t| only_disabled[t]), 0);
+        assert_eq!(combat_training_tier(|t| only_disabled[t]), 1);
+        let enabled_only = [0u8, 0, 0, 0, 0];
+        assert_eq!(combat_training_tier(|t| enabled_only[t]), -1);
     }
 
     #[test]
