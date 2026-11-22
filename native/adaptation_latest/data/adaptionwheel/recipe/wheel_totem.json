@@ -6,12 +6,8 @@
     " S "
   ],
   "key": {
-    "S": {
-      "item": "minecraft:stick"
-    },
-    "G": {
-      "tag": "minecraft:logs"
-    }
+    "S": "minecraft:stick",
+    "G": "#minecraft:logs"
   },
   "result": {
     "id": "adaptionwheel:wheel_totem",
