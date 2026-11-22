@@ -10,6 +10,8 @@ use mod_api::{
 };
 
 mod abilities;
+mod existence_mut;
+mod fist_ladders;
 mod commands_impl;
 mod concepts_registry;
 mod damage_categories;
@@ -18,6 +20,7 @@ mod hooks_impl;
 mod state_v2;
 mod task_system;
 mod state_impl;
+mod synergies;
 
 #[derive(Default)]
 struct Mod;
