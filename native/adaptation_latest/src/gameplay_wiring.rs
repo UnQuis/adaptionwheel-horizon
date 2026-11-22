@@ -15,8 +15,8 @@
 //!   must hand progress to the next stage.
 //! - The Fist *mutation* gate is the exception in the other direction:
 //!   [`crate::existence_mut::fist_mutation_ready`] requires
-//!   `levelOrZero(Mine_Labor)`. `FistProgressSnapshot` therefore carries both
-//!   the raw mining levels and an explicitly effective `Mine_Labor` value.
+//!   `levelOrZero(Mine_Labor)`. `FistProgressSnapshot` therefore carries an
+//!   explicitly effective `Mine_Labor` value, separate from the raw ladder.
 //!
 //! Only the `apply_*` helpers at the bottom depend on `mod_api`; every
 //! snapshot, resolver and outcome above them is plain data and is unit-tested
@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use mod_api::{ActiveEffect, PlayerRef, ServerHost, Text};
+use mod_api::{PlayerRef, ServerHost, Text};
 
 use crate::damage_categories::{
     DamageCategory, categorize_with_tags, category_capstone_applies, contact_immunity_applies,
@@ -272,8 +272,6 @@ pub struct FistProgressSnapshot {
     pub combat_levels: [u8; TIER_COUNT],
     /// `levelOrZero(Mine_Labor)` — 0 when the player disabled it.
     pub mine_labor_level_or_zero: u8,
-    /// Raw `levels[Mine_Labor]`, for display only.
-    pub mine_labor_raw_level: u8,
     /// Tier of the block just broken (the Fist mutation needs stone, tier 1).
     pub broken_block_tier: i32,
     /// Tier of a block the caller wants to harvest.
@@ -300,7 +298,7 @@ pub struct FistTierSnapshot {
 /// Resolve both ladders and the Fist mutation gate from **raw** levels.
 ///
 /// The mutation gate is the one `levelOrZero` exception: it consumes
-/// `mine_labor_level_or_zero`, never `mine_labor_raw_level`.
+/// `mine_labor_level_or_zero`, while the tiers themselves consume raw levels.
 pub fn fist_tier_from_progress(snapshot: &FistProgressSnapshot) -> FistTierSnapshot {
     let mining_tier = mining_reach_tier(|tier| snapshot.mining_levels[tier]);
     let combat_current = combat_current_tier(|tier| snapshot.combat_levels[tier]);
@@ -343,7 +341,10 @@ pub struct ExistenceSnapshot {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ExistenceOutcome {
     pub progress: BTreeMap<String, u32>,
+    /// Total ticks accumulated for `boss_path` after this hit was banked —
+    /// not the per-hit bonus (see `hit_bonus_ticks`).
     pub banked_ticks: u32,
+    /// Ticks this single hit would add (`hit_reduction`), before clamping.
     pub hit_bonus_ticks: u32,
     pub rewards: Vec<ExistenceReward>,
     pub visible_progress: BTreeMap<String, u32>,
@@ -479,49 +480,42 @@ pub fn damage_category_and_mitigation(snapshot: &DamageSnapshot) -> DamageOutcom
 /// What the host side actually changed, so the caller can log/skip a flush.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct AppliedSynergyEffects {
-    pub ignited: usize,
-    pub slowed: usize,
     pub healed: usize,
 }
 
-/// Apply the parts of a resolved effect that a `PlayerRef` can express with
-/// pinned SDK calls: fire ticks, slowness and healing.
+/// The only resolved effects safe to apply through a `PlayerRef`: self-heals.
 ///
-/// Chain targets, retaliation and mob-targeting need target refs/state the
-/// hook owns; they stay as data in [`ResolvedEffect`] for the lead to apply.
+/// On-hit effects (ASHWALKER/GOLIATH ignite, GLACIERBLOOD slow, STORMCALL
+/// chain, GRAVEBLOOM retaliation) target the struck entity, not the wearer,
+/// and must stay as data for the damage hook to apply to its target.
+fn wearer_heal_amount(effect: &ResolvedEffect) -> Option<f32> {
+    match effect {
+        ResolvedEffect::VoidHeal { heal, .. }
+        | ResolvedEffect::BlockBreakHeal { heal, .. } => Some(*heal as f32),
+        _ => None,
+    }
+}
+
+/// Apply only self-targeted synergy effects (void and block-break healing) to
+/// the wearer.
+///
+/// This deliberately does **not** set fire ticks, add slowness, chain or
+/// retaliate: those are on-hit effects for the damaged entity, and calling
+/// this from a per-tick hook would self-ignite/slow the wearer. There is no
+/// duration to overwrite here — ignite effects never reach the host through
+/// this helper; use [`ResolvedEffect`] from the damage hook instead.
 pub fn apply_synergy_effects(
     host: &mut dyn ServerHost,
     player: PlayerRef,
     effects: &[ResolvedEffect],
 ) -> AppliedSynergyEffects {
     let mut applied = AppliedSynergyEffects::default();
-    let living = host.living(player.entity());
-    for effect in effects {
-        match effect {
-            ResolvedEffect::Ignite { ticks, .. } | ResolvedEffect::Goliath { ticks, .. } => {
-                if player.entity().set_remaining_fire_ticks(host, *ticks) {
-                    applied.ignited += 1;
-                }
-            }
-            ResolvedEffect::Slow { ticks, amplifier, .. } => {
-                if let (Some(living), Some(key)) =
-                    (living, host.effect_key("minecraft:slowness"))
-                {
-                    let instance = ActiveEffect::new(key, *ticks, *amplifier, false, true, true);
-                    if living.add_effect(host, &instance) {
-                        applied.slowed += 1;
-                    }
-                }
-            }
-            ResolvedEffect::VoidHeal { heal, .. }
-            | ResolvedEffect::BlockBreakHeal { heal, .. } => {
-                if let Some(living) = living {
-                    if living.heal(host, *heal as f32) {
-                        applied.healed += 1;
-                    }
-                }
-            }
-            _ => {}
+    let Some(living) = host.living(player.entity()) else {
+        return applied;
+    };
+    for heal in effects.iter().filter_map(wearer_heal_amount) {
+        if living.heal(host, heal) {
+            applied.healed += 1;
         }
     }
     applied
@@ -804,7 +798,6 @@ mod tests {
     #[test]
     fn fist_mutation_gate_uses_level_or_zero_not_raw_level() {
         let mut s = fist_snapshot();
-        s.mine_labor_raw_level = FIST_MAX_LEVEL;
         s.mine_labor_level_or_zero = 0;
         s.broken_block_tier = 1;
         assert!(!fist_tier_from_progress(&s).fist_mutation_unlocked);
@@ -991,5 +984,26 @@ mod tests {
         ];
         let ids: Vec<_> = effects.iter().map(ResolvedEffect::id).collect();
         assert_eq!(ids, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+    }
+
+    #[test]
+    fn on_hit_effects_are_never_applied_to_the_wearer() {
+        // `apply_synergy_effects` can only call `wearer_heal_amount`; these are
+        // all on-hit effects for the struck entity and must be skipped even
+        // though two of them carry ignite durations.
+        let on_hit = vec![
+            ResolvedEffect::Ignite { id: "ashwalker", ticks: 108, cooldown_ticks: 20, strength: 2.6875 },
+            ResolvedEffect::Goliath { id: "goliath", ticks: 80, smelting: &[], strength: 4.0 },
+            ResolvedEffect::Slow { id: "glacierblood", ticks: 80, amplifier: 4, strength: 4.0 },
+            ResolvedEffect::Chain { id: "stormcall", power: 2.0, targets: 2, damage: 3.2, strength: 2.875 },
+            ResolvedEffect::Retaliation { id: "gravebloom", damage: 8.25, strength: 1.375 },
+        ];
+        assert!(on_hit.iter().all(|e| wearer_heal_amount(e).is_none()));
+
+        let wearer_heals = vec![
+            ResolvedEffect::VoidHeal { id: "unmaker", heal: 8.0, strength: 4.0 },
+            ResolvedEffect::BlockBreakHeal { id: "astralmine", heal: 0.275, strength: 1.1 },
+        ];
+        assert!(wearer_heals.iter().all(|e| wearer_heal_amount(e).is_some()));
     }
 }
